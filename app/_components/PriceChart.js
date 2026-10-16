@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { gt, listPools, rememberPool, knownPool } from '../_lib/markets';
-import { usd, price as fmtPrice, pct } from '../_lib/format';
+import { usd, price as fmtPrice, pct, amount as fmtAmount, sol as fmtSol } from '../_lib/format';
 import { TokenImage } from './Icons';
 
 const FRAMES = [
@@ -60,7 +60,25 @@ function toBars(list, mult) {
 const volBar = (b) => ({ time: b.time, value: b.volume || 0, color: b.close >= b.open ? C.upVol : C.downVol });
 const candle = (b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
 
-export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl, livePrice }) {
+// nearest bar time to t (seconds), or null if there's no bar close by
+function snapTime(times, t, sec) {
+  if (!times.length) return null;
+  const bucket = Math.floor(t / sec) * sec;
+  let lo = 0;
+  let hi = times.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] < bucket) lo = mid + 1;
+    else hi = mid;
+  }
+  let best = times[lo];
+  if (lo > 0 && Math.abs(times[lo - 1] - bucket) < Math.abs(best - bucket)) best = times[lo - 1];
+  return Math.abs(best - bucket) <= sec * 2 ? best : null;
+}
+
+const MAX_FILLS = 60;
+
+export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl, livePrice, fills = [], avgEntryUsd = null, solPrice = null }) {
   const box = useRef(null);
   const avatarRef = useRef(null);
   const chartRef = useRef(null);
@@ -70,6 +88,10 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
   const athRef = useRef(null);
   const hoverRef = useRef(false);
   const stateRef = useRef('loading');
+  const timesRef = useRef([]); // bar times on the chart, ascending
+  const fillEls = useRef(new Map()); // sig -> bubble element
+  const fillData = useRef({ fills: [], mult: 1, solPrice: null, sec: 60 });
+  const entryLineRef = useRef(null);
 
   const [frame, setFrame] = useState(FRAMES[0]);
   const [mode, setMode] = useState('mcap'); // 'mcap' | 'price'
@@ -91,12 +113,33 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
   const useMcap = mode === 'mcap' && sup > 0;
   const mult = useMcap ? sup : 1;
 
+  // your buys and sells as bubbles at the price they filled
+  const placeFills = () => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const { fills: list, mult: m, solPrice: sp, sec } = fillData.current;
+    for (const f of list) {
+      const el = fillEls.current.get(f.sig);
+      if (!el) continue;
+      const t = chart && series && sp ? snapTime(timesRef.current, Math.floor(f.time / 1000), sec) : null;
+      const x = t === null ? null : chart.timeScale().timeToCoordinate(t);
+      const y = x === null ? null : series.priceToCoordinate((Math.abs(f.sol) / Math.abs(f.tokens)) * sp * m);
+      if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)) {
+        el.style.opacity = '0';
+        continue;
+      }
+      el.style.opacity = '1';
+      el.style.transform = `translate(${Math.round(x - 9)}px, ${Math.round(y - 9)}px)`;
+    }
+  };
+
   // keep the coin's avatar pinned to the highest candle on screen
   const placeAvatar = useCallback(() => {
     const el = avatarRef.current;
     const chart = chartRef.current;
     const series = seriesRef.current;
     const ath = athRef.current;
+    placeFills();
     if (!el) return;
     if (!chart || !series || !ath) {
       el.style.opacity = '0';
@@ -111,6 +154,11 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     el.style.opacity = '1';
     el.style.transform = `translate(${Math.round(x - 13)}px, ${Math.round(y - 34)}px)`;
   }, []);
+
+  const noteTime = (t) => {
+    const ts = timesRef.current;
+    if (!ts.length || t > ts[ts.length - 1]) ts.push(t);
+  };
 
   const bumpAth = (b) => {
     if (!athRef.current || b.high > athRef.current.high) athRef.current = { time: b.time, high: b.high };
@@ -246,6 +294,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
       seriesRef.current.setData(bars.map(candle));
       volRef.current.setData(bars.map(volBar));
       lastBarRef.current = bars[bars.length - 1];
+      timesRef.current = bars.map((b) => b.time);
       athRef.current = null;
       bars.forEach(bumpAth);
       const ts = chartRef.current.timeScale();
@@ -258,6 +307,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     seriesRef.current.setData([]);
     volRef.current.setData([]);
     lastBarRef.current = null;
+    timesRef.current = [];
     athRef.current = null;
     setLegend(null);
     requestAnimationFrame(placeAvatar);
@@ -298,6 +348,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
               seriesRef.current.update(candle(b));
               volRef.current.update(volBar(b));
               lastBarRef.current = b;
+              noteTime(b.time);
               bumpAth(b);
             }
             if (!hoverRef.current) setLegend(lastBarRef.current);
@@ -337,12 +388,42 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
       return;
     }
     lastBarRef.current = bar;
+    noteTime(bar.time);
     bumpAth(bar);
     if (stateRef.current === 'empty' || stateRef.current === 'error') setState('live');
     if (!hoverRef.current) setLegend(bar);
     requestAnimationFrame(placeAvatar);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePrice, chartReady, mult, frame, state]);
+
+  // your trades: bubbles follow the chart as it scrolls and rescales
+  const shownFills = fills.filter((f) => (f.side === 'buy' || f.side === 'sell') && f.tokens && f.sol).slice(-MAX_FILLS);
+  fillData.current = { fills: shownFills, mult, solPrice, sec: frame.sec };
+  useEffect(() => {
+    requestAnimationFrame(placeAvatar);
+  });
+
+  // your average entry as a line across the chart
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!chartReady || !series) return;
+    if (entryLineRef.current) {
+      try {
+        series.removePriceLine(entryLineRef.current);
+      } catch {}
+      entryLineRef.current = null;
+    }
+    const v = Number(avgEntryUsd) * mult;
+    if (!(v > 0)) return;
+    entryLineRef.current = series.createPriceLine({
+      price: v,
+      color: '#A3B4AD',
+      lineWidth: 1,
+      lineStyle: 2, // dashed
+      axisLabelVisible: true,
+      title: 'Avg entry',
+    });
+  }, [avgEntryUsd, mult, chartReady]);
 
   const fmtV = (v) => (useMcap ? usd(v) : fmtPrice(v));
   const dir = legend && legend.close >= legend.open ? 'up' : 'down';
@@ -373,6 +454,26 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
         <div ref={avatarRef} className="pc-avatar" aria-hidden="true">
           <TokenImage src={imageUrl} label={symbol} size={24} />
         </div>
+        {shownFills.map((f) => {
+          const buy = f.side === 'buy';
+          const when = new Date(f.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const label = `${buy ? 'Bought' : 'Sold'} ${fmtAmount(Math.abs(f.tokens))} ${symbol || ''} for ${fmtSol(Math.abs(f.sol))} SOL, ${when}`;
+          return (
+            <div
+              key={f.sig}
+              ref={(el) => {
+                if (el) fillEls.current.set(f.sig, el);
+                else fillEls.current.delete(f.sig);
+              }}
+              className={`pc-fill ${buy ? 'buy' : 'sell'}`}
+              title={label}
+              role="img"
+              aria-label={label}
+            >
+              {buy ? 'B' : 'S'}
+            </div>
+          );
+        })}
 
         {legend && showChart && (
           <div className="pc-legend" aria-hidden="true">

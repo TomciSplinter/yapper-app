@@ -13,6 +13,8 @@ const ALLOWED = new Set([
   'getMultipleAccounts',
   'getTokenLargestAccounts',
   'getTokenSupply',
+  'getTransaction',
+  'getSignaturesForAddress',
   'sendTransaction',
   'simulateTransaction',
 ]);

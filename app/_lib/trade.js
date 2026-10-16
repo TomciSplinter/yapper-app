@@ -7,6 +7,7 @@ import { VersionedTransaction } from '@solana/web3.js';
 import { rpc, b64ToBytes, bytesToB64, waitForConfirm } from './chain';
 import { ensureUnlocked, getState, signAs, signerKind } from './wallets';
 import { checkTrade } from './guard';
+import { recordTrade } from './fills';
 
 const SETTINGS_KEY = 'yapper:trade-settings';
 const DEFAULTS = { slippage: '10', prioFee: '0.0005', buyAmt: '0.1' };
@@ -93,6 +94,22 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
     const ok = await waitForConfirm(sig);
     onTraded?.();
     if (ok === true) {
+      // read the confirmed trade from the chain: feeds avg entry, PnL and chart
+      // markers, and catches the rare case where the coins didn't land here
+      recordTrade(wallet, mint, sig)
+        .then((fill) => {
+          onTraded?.();
+          if (fill && isBuy && !(fill.tokens > 0)) {
+            toast.show({
+              kind: 'error',
+              title: `The ${sym} buy confirmed, but no coins arrived in this wallet`,
+              detail: 'Open the transaction to see where they went, and send it to support.',
+              sig,
+              autoClose: 30000,
+            });
+          }
+        })
+        .catch(() => {});
       toast.update(id, {
         kind: 'success',
         title: isBuy ? `Bought ${sym}` : `Sold ${percent}% of ${sym}`,

@@ -3,7 +3,8 @@
 // Both are called from the viewer's browser, so free rate limits apply per
 // user rather than to the whole site.
 
-import { rpc, SOL_MINT, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
+import { rpc, rpcBatchSettled, SOL_MINT, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
+import { readTokenAccount, readMintDecimals, toUi } from './holdings';
 
 const DS = 'https://api.dexscreener.com';
 const GT = 'https://api.geckoterminal.com/api/v2/networks/solana';
@@ -197,44 +198,64 @@ export async function withPool(mint, pairAddress, fn, isCancelled) {
 
 /* ---------- wallet positions ---------- */
 
+// Every coin the wallet holds. Token accounts are read raw from both token
+// programs (classic and Token-2022) and decimals from each mint, so a coin
+// can't go missing because of how an RPC parses it. Coins DexScreener
+// doesn't list yet still show, just without a price.
 export async function loadPositions(wallet) {
-  const opts = { encoding: 'jsonParsed', commitment: 'confirmed' };
-  const [classic, t22] = await Promise.all([
-    rpc('getParsedTokenAccountsByOwner', [wallet, { programId: TOKEN_PROGRAM }, opts]),
-    rpc('getParsedTokenAccountsByOwner', [wallet, { programId: TOKEN_2022_PROGRAM }, opts]).catch(() => ({ value: [] })),
+  const cfg = { encoding: 'base64', commitment: 'confirmed' };
+  const [classic, t22] = await rpcBatchSettled([
+    ['getTokenAccountsByOwner', [wallet, { programId: TOKEN_PROGRAM }, cfg]],
+    ['getTokenAccountsByOwner', [wallet, { programId: TOKEN_2022_PROGRAM }, cfg]],
   ]);
+  if (!classic.ok && !t22.ok) throw new Error(classic.error);
 
-  const balances = new Map();
-  for (const acc of [...(classic?.value || []), ...(t22?.value || [])]) {
-    const info = acc?.account?.data?.parsed?.info;
-    const m = info?.mint;
-    const amt = Number(info?.tokenAmount?.uiAmountString ?? info?.tokenAmount?.uiAmount) || 0;
-    if (!m || !(amt > 0) || m === SOL_MINT) continue;
-    balances.set(m, (balances.get(m) || 0) + amt);
+  const raw = new Map(); // mint -> BigInt
+  for (const r of [classic, t22]) {
+    if (!r.ok) continue;
+    for (const it of r.result?.value || []) {
+      const t = readTokenAccount(it.account);
+      if (!t || t.owner !== wallet || t.mint === SOL_MINT || t.raw === 0n) continue;
+      raw.set(t.mint, (raw.get(t.mint) || 0n) + t.raw);
+    }
+  }
+  const mints = [...raw.keys()].slice(0, 150);
+  if (!mints.length) return [];
+
+  const decimals = new Map();
+  for (let i = 0; i < mints.length; i += 100) {
+    const chunk = mints.slice(i, i + 100);
+    try {
+      const r = await rpc('getMultipleAccounts', [chunk, cfg]);
+      (r?.value || []).forEach((a, j) => {
+        const d = readMintDecimals(a);
+        if (d !== null) decimals.set(chunk[j], d);
+      });
+    } catch {}
   }
 
-  const mints = [...balances.keys()].slice(0, 150);
   const pairs = await fetchPairs(mints);
   const rows = [];
   for (const m of mints) {
     const p = pairs.get(m);
-    if (!p) continue;
-    const priceUsd = Number(p.priceUsd) || 0;
-    const amt = balances.get(m);
-    const value = amt * priceUsd;
-    if (value < 0.01) continue;
+    const amt = toUi(raw.get(m), decimals.get(m) ?? 6);
+    const priceUsd = p ? Number(p.priceUsd) || 0 : null;
+    const value = priceUsd !== null ? amt * priceUsd : null;
+    if (value !== null && value < 0.01) continue; // dust
+    if (!p && !decimals.has(m)) continue;
     rows.push({
       mint: m,
-      name: p.baseToken?.name || 'Unknown',
-      symbol: p.baseToken?.symbol || '',
-      imageUrl: p.info?.imageUrl || null,
+      name: p?.baseToken?.name || 'Unknown coin',
+      symbol: p?.baseToken?.symbol || `${m.slice(0, 4)}…${m.slice(-4)}`,
+      imageUrl: p?.info?.imageUrl || null,
       amount: amt,
       priceUsd,
+      priceNative: p && p.quoteToken?.address === SOL_MINT ? Number(p.priceNative) || null : null,
       value,
-      change24h: p.priceChange?.h24 ?? null,
-      pairAddress: p.pairAddress,
+      change24h: p?.priceChange?.h24 ?? null,
+      pairAddress: p?.pairAddress || null,
     });
   }
-  rows.sort((a, b) => b.value - a.value);
+  rows.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   return rows;
 }

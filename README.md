@@ -10,7 +10,9 @@ Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or
 - **Pulse**: pump.fun coins in three live columns, New pairs (under 70% of the bonding curve), Final stretch (70% or more) and Migrated (graduated to PumpSwap). New coins and migrations stream in as they happen and coins move between columns as they progress. A list holds still while your pointer is over it (or while you touch it), so a Buy click always hits the coin you see.
 - **Quick buy**: one amount, set in Discover or Pulse, that every Buy button in the lists spends right away.
 - **Coin view**: header stats, candlestick chart (market cap or price, 1m to 1D), live trades, top holders with pools and program accounts labelled, your positions, a buy/sell panel and coin info (buy/sell pressure, top 10 holders, volume, supply).
-- **Positions**: every coin in the connected wallet with live value.
+  - **Your trades on the chart**: green B and red S bubbles at the price each buy and sell filled, plus a dashed average entry line.
+  - **Your position** under the trade button: SOL bought and sold, holding value, PnL (USD, %, SOL) and average entry as a market cap. Built from your trades on the chain, so it includes trades made in other apps and works on any device. Fees count toward cost; token-account rent doesn't.
+- **Positions**: every coin in the connected wallet (both token programs, including coins DexScreener doesn't list yet) with live value and PnL.
 - **Wallets**: create or import Yapper wallets that trade instantly with no popups, or connect Phantom, Solflare or Backpack. Switch, rename, deposit, withdraw, export and remove from the wallet menu.
 - Search by name, ticker or contract address (press `/` anywhere).
 - Toast notifications for each trade step, and a status bar with connection, SOL price and the voice orb.
@@ -26,7 +28,7 @@ Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or
 | New coins and migrations | PumpPortal websocket (its free streams) | browser |
 | Holders, top 10 and dev share (optional) | Jupiter token API | `/api/tokeninfo` (cached 60s) |
 | Search | DexScreener | `/api/search` |
-| Balances, holders, simulating and sending transactions | Helius RPC | `/api/rpc` (key stays on the server, method allowlist) |
+| Balances, holders, your trade history, simulating and sending transactions | Helius RPC | `/api/rpc` (key stays on the server, method allowlist) |
 | Trade transactions | PumpPortal Local Transaction API (`pool: auto`) | `/api/trade` |
 
 ## Wallets and security

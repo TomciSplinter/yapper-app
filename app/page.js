@@ -28,6 +28,8 @@ import {
 } from './_lib/wallets';
 import { fetchPair, fetchSolPrice } from './_lib/markets';
 import { executeTrade } from './_lib/trade';
+import { loadHolding } from './_lib/holdings';
+import { useFills, summarize } from './_lib/fills';
 import { useHolders, useToasts } from './_lib/hooks';
 import { usd, sol, age, dexLabel } from './_lib/format';
 
@@ -219,12 +221,8 @@ export default function App() {
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await rpc('getParsedTokenAccountsByOwner', [wallet, { mint }, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
-        const total = (r?.value || []).reduce((s, a) => {
-          const t = a?.account?.data?.parsed?.info?.tokenAmount;
-          return s + (Number(t?.uiAmountString ?? t?.uiAmount) || 0);
-        }, 0);
-        if (!cancelled) setTokenBal(total);
+        const h = await loadHolding(wallet, mint);
+        if (!cancelled) setTokenBal(h.amount);
       } catch {}
     };
     load();
@@ -236,6 +234,16 @@ export default function App() {
       clearInterval(t);
     };
   }, [wallet, mint, view, balTick]);
+
+  // your trades in this coin: avg entry, PnL and chart markers
+  const fills = useFills(view === 'token' ? wallet : null, view === 'token' ? mint : null, balTick);
+  const priceSolNow =
+    pair?.quoteToken?.address === 'So11111111111111111111111111111111111111112' && Number(pair?.priceNative) > 0
+      ? Number(pair.priceNative)
+      : solPrice && Number(pair?.priceUsd) > 0
+      ? Number(pair.priceUsd) / solPrice
+      : null;
+  const position = summarize(fills, tokenBal, priceSolNow);
 
   const onTraded = useCallback(() => {
     setBalTick((n) => n + 1);
@@ -290,6 +298,17 @@ export default function App() {
           sol_balance: solBal,
           holding_this_coin: view === 'token' ? tokenBal : null,
           holding_value_usd: view === 'token' && tokenBal && priceUsd ? tokenBal * priceUsd : null,
+          position_in_this_coin:
+            view === 'token' && position
+              ? {
+                  bought_sol: position.boughtSol,
+                  sold_sol: position.soldSol,
+                  avg_entry_market_cap_usd: solPrice && supply ? position.avgEntry * solPrice * supply : null,
+                  pnl_sol: position.pnl,
+                  pnl_usd: solPrice ? position.pnl * solPrice : null,
+                  pnl_pct: position.pnlPct,
+                }
+              : null,
         }
       : { connected: false },
     sol_price_usd: solPrice,
@@ -326,7 +345,7 @@ export default function App() {
               </div>
             </header>
             <div className="view-body">
-              <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} />
+              <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} solPrice={solPrice} />
             </div>
           </section>
         )}
@@ -346,6 +365,9 @@ export default function App() {
                       symbol={pair?.baseToken?.symbol}
                       imageUrl={pair?.info?.imageUrl}
                       livePrice={pair?.priceUsd}
+                      fills={fills}
+                      avgEntryUsd={position && position.held > 0 && solPrice ? position.avgEntry * solPrice : null}
+                      solPrice={solPrice}
                     />
                   ) : (
                     <div className="pc-note">Loading chart…</div>
@@ -372,6 +394,8 @@ export default function App() {
                   wallet={wallet}
                   solBal={solBal}
                   tokenBal={tokenBal}
+                  position={position}
+                  supply={supply}
                   solPrice={solPrice}
                   onConnect={connect}
                   onTraded={onTraded}

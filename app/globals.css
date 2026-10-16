@@ -1068,6 +1068,92 @@ p {
   font-weight: 600;
 }
 
+/* your position: bought / sold / holding / PnL */
+.tp-pos {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  background: var(--raise);
+  font-size: 12px;
+}
+.tp-pos-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.tp-pos-grid > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.tp-pos-grid span,
+.tp-pos-foot {
+  color: var(--ink-3);
+}
+.tp-pos-grid b {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tp-pos-grid b small {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tp-pos b.up,
+.tp-pos .up {
+  color: var(--up);
+}
+.tp-pos b.down,
+.tp-pos .down {
+  color: var(--down);
+}
+.tp-pos-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.tp-pos-foot b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* your trades on the chart */
+.pc-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #050807;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  font: 700 10px/1 var(--font-mono, monospace);
+  opacity: 0;
+  pointer-events: auto;
+  cursor: default;
+  transition: opacity 0.15s;
+}
+.pc-fill.buy {
+  background: var(--up);
+  color: var(--mint-ink);
+}
+.pc-fill.sell {
+  background: var(--down);
+  color: #fff;
+}
+
 /* coin info */
 .tf {
   display: grid;

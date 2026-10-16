@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractMint, rpc, SOL_MINT } from '../_lib/chain';
 import { fetchPair } from '../_lib/markets';
 import { executeTrade } from '../_lib/trade';
+import { loadHolding } from '../_lib/holdings';
 import { signerKind } from '../_lib/wallets';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
 import { Icon, TokenImage } from './Icons';
@@ -238,12 +239,10 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
       if (!pct) return say(`How much ${sym} should I sell? Say a percentage, like sell half.`);
       let held = 0;
       try {
-        const r = await rpc('getParsedTokenAccountsByOwner', [wallet, { mint: coin.mint }, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
-        held = (r?.value || []).reduce((s, a) => {
-          const t = a?.account?.data?.parsed?.info?.tokenAmount;
-          return s + (Number(t?.uiAmountString ?? t?.uiAmount) || 0);
-        }, 0);
-      } catch {}
+        held = (await loadHolding(wallet, coin.mint)).amount;
+      } catch {
+        return fail("I couldn't read your balance right now. Try again in a moment.");
+      }
       if (!(held > 0)) return fail(`You don't hold any ${sym}.`);
       const part = (held * pct) / 100;
       const solOut = quoteIsSol && pn > 0 ? part * pn : solPrice && pu > 0 ? (part * pu) / solPrice : null;

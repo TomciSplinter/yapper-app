@@ -104,6 +104,23 @@ export async function rpcBatch(calls) {
   });
 }
 
+// Like rpcBatch, but one failed call doesn't fail the rest:
+// returns [{ ok: true, result } | { ok: false, error }, ...].
+export async function rpcBatchSettled(calls) {
+  const r = await fetch('/api/rpc', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: '2.0', id, method, params }))),
+  }).catch(() => null);
+  if (!r) throw new Error('Network error. Check your internet connection.');
+  const j = await r.json().catch(() => null);
+  if (!Array.isArray(j)) throw new Error(j?.error?.message || `Solana RPC error (${r.status})`);
+  return calls.map((_, i) => {
+    const item = j.find((x) => x && x.id === i);
+    return item && !item.error ? { ok: true, result: item.result } : { ok: false, error: item?.error?.message || 'Solana RPC error' };
+  });
+}
+
 export function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);

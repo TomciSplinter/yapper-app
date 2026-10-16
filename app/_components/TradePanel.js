@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { rpc, SOL_MINT } from '../_lib/chain';
-import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
+import { amount as fmtAmount, sol as fmtSol, usd, pct } from '../_lib/format';
+import { loadHolding } from '../_lib/holdings';
 import { executeTrade, readTradeSettings, saveTradeSettings } from '../_lib/trade';
 
 const BUY_PRESETS = ['0.1', '0.25', '0.5', '1'];
@@ -12,7 +13,7 @@ function clean(v) {
   return v.replace(',', '.').replace(/[^0-9.]/g, '');
 }
 
-export default function TradePanel({ mint, pair, side, onSideChange, wallet, solBal, tokenBal, solPrice, onConnect, onTraded, toast }) {
+export default function TradePanel({ mint, pair, side, onSideChange, wallet, solBal, tokenBal, position, supply, solPrice, onConnect, onTraded, toast }) {
   const [buyAmt, setBuyAmt] = useState('0.1');
   const [sellPct, setSellPct] = useState('50');
   const [slippage, setSlippage] = useState('10');
@@ -72,7 +73,6 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
       if (!(buyNum > 0)) return setError('Enter how much SOL to spend.');
     } else {
       if (!(sellNum > 0) || sellNum > 100) return setError('Enter a percentage between 1 and 100.');
-      if (!(tokenBal > 0)) return setError(`You don't hold any ${sym}.`);
     }
     const slip = Number(slippage);
     if (!(slip >= 0.5) || slip > 50) return setError('Set slippage between 0.5% and 50%.');
@@ -81,6 +81,17 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
 
     setBusy(true);
     try {
+      if (!isBuy && !(tokenBal > 0)) {
+        // the shown holding can lag a fresh buy, so ask the chain before saying no
+        let fresh;
+        try {
+          fresh = (await loadHolding(wallet, mint)).amount;
+        } catch {
+          return setError("Couldn't read your balance right now. Try again in a moment.");
+        }
+        if (!(fresh > 0)) return setError(`You don't hold any ${sym}.`);
+        onTraded?.();
+      }
       if (isBuy && solBal !== null && buyNum > solBal) {
         // the shown balance can lag a fresh deposit, so ask the chain before saying no
         const fresh = await rpc('getBalance', [wallet, { commitment: 'confirmed' }])
@@ -209,15 +220,66 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
         </p>
       )}
 
-      {wallet && tokenBal > 0 && (
-        <div className="tp-position">
-          <span>Your position</span>
-          <span>
-            <b>{fmtAmount(tokenBal)}</b> {pair?.baseToken?.symbol || ''}
-            {holdingUsd !== null && <span className="muted"> {usd(holdingUsd)}</span>}
-          </span>
-        </div>
+      {wallet && (position || tokenBal > 0) && (
+        <PositionCard position={position} tokenBal={tokenBal} holdingUsd={holdingUsd} symbol={pair?.baseToken?.symbol || ''} solPrice={solPrice} supply={supply} />
       )}
     </section>
+  );
+}
+
+// short SOL amounts so four fit side by side: 0.0076, 0.202, 1.25, 12.4
+const solTxt = (v) => {
+  const a = Math.abs(v);
+  const n = a === 0 ? '0' : a < 0.01 ? a.toFixed(4) : a < 1 ? a.toFixed(3) : a < 100 ? a.toFixed(2) : a.toFixed(0);
+  return `${n} SOL`;
+};
+const signed = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
+
+// Bought / Sold / Holding / PnL, plus your average entry
+function PositionCard({ position: p, tokenBal, holdingUsd, symbol, solPrice, supply }) {
+  const tone = p && p.pnl > 0 ? 'up' : p && p.pnl < 0 ? 'down' : '';
+  const entryUsd = p && solPrice ? p.avgEntry * solPrice : null;
+  return (
+    <div className="tp-pos" aria-label="Your position">
+      <div className="tp-pos-grid">
+        <div>
+          <span>Bought</span>
+          <b className="up">{p ? solTxt(p.boughtSol) : '—'}</b>
+        </div>
+        <div>
+          <span>Sold</span>
+          <b className="down">{p ? solTxt(p.soldSol) : '—'}</b>
+        </div>
+        <div>
+          <span>Holding</span>
+          <b>{holdingUsd !== null ? usd(holdingUsd) : tokenBal > 0 ? fmtAmount(tokenBal) : '—'}</b>
+        </div>
+        <div>
+          <span>PnL</span>
+          <b className={tone}>
+            {p ? `${signed(p.pnl)}${solPrice ? usd(Math.abs(p.pnl) * solPrice) : solTxt(p.pnl)}` : '—'}
+            {p && p.pnlPct !== null && <small> {pct(p.pnlPct)}</small>}
+          </b>
+        </div>
+      </div>
+      <div className="tp-pos-foot">
+        <span>
+          Avg entry{' '}
+          <b>
+            {entryUsd !== null && supply > 0 ? `${usd(entryUsd * supply)} MC` : p ? `${p.avgEntry.toPrecision(3)} SOL` : '—'}
+          </b>
+        </span>
+        <span>
+          {tokenBal > 0 ? (
+            <>
+              <b>{fmtAmount(tokenBal)}</b> {symbol}
+            </>
+          ) : (
+            'Position closed'
+          )}
+          {p && p.pnl !== 0 ? <span className={tone}> {signed(p.pnl)}{solTxt(p.pnl)}</span> : null}
+        </span>
+      </div>
+    </div>
   );
 }
