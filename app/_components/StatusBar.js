@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getRpcHealth, onRpcHealth, rpc } from '../_lib/chain';
 
-export default function StatusBar({ solPrice, onVoice }) {
+export default function StatusBar({ solPrice, voice }) {
   const [health, setHealth] = useState(() => getRpcHealth());
 
   useEffect(() => onRpcHealth(setHealth), []);
@@ -38,15 +38,7 @@ export default function StatusBar({ solPrice, onVoice }) {
         </a>
       </div>
 
-      <div className="sb-voice">
-        <button type="button" className="orb" onClick={onVoice} aria-describedby="sb-voice-note">
-          <img src="/orb.png" alt="" width="46" height="46" />
-          <span className="sr-only">Voice trading</span>
-        </button>
-        <span className="sb-voice-note" id="sb-voice-note">
-          Voice trading <span className="soon">Soon</span>
-        </span>
-      </div>
+      <div className="sb-voice">{voice}</div>
 
       <div className="sb-right">
         <span className="sb-sol-m">

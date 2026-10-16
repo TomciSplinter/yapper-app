@@ -1,6 +1,6 @@
 # Yapper terminal
 
-Solana trading terminal at app.yapper.trade. Voice trading is next.
+Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or Space), say a trade or a question, confirm.
 
 ## What's in it
 
@@ -35,7 +35,9 @@ Users sign every trade in their own wallet (Phantom, Solflare, Backpack). No pri
 | Name | Needed for |
 | --- | --- |
 | `HELIUS_API_KEY` | balances, holders, sending transactions |
-| `OPENAI_API_KEY` | voice layer (next step) |
+| `OPENAI_API_KEY` | voice commands (`/api/voice`) |
+| `OPENAI_MODEL` (optional) | model that understands commands, default `gpt-4.1-mini` |
+| `OPENAI_TRANSCRIBE_MODEL` (optional) | speech-to-text model, default `gpt-4o-mini-transcribe` |
 
 ## Deploy
 

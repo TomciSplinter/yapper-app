@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import TopBar from './_components/TopBar';
 import TokenHeader from './_components/TokenHeader';
 import PriceChart from './_components/PriceChart';
@@ -11,10 +11,11 @@ import Discover from './_components/Discover';
 import Positions from './_components/Positions';
 import StatusBar from './_components/StatusBar';
 import Toasts from './_components/Toasts';
+import VoiceDock from './_components/VoiceDock';
 import { extractMint, getProvider, rpc } from './_lib/chain';
 import { fetchPair, fetchSolPrice } from './_lib/markets';
 import { useHolders, useToasts } from './_lib/hooks';
-import { usd, sol } from './_lib/format';
+import { usd, sol, age, dexLabel } from './_lib/format';
 
 function readUrl() {
   const q = new URLSearchParams(window.location.search);
@@ -242,14 +243,45 @@ export default function App() {
     setTimeout(() => setBalTick((n) => n + 1), 5000);
   }, []);
 
-  const onVoice = useCallback(() => {
-    toast.show({
-      kind: 'info',
-      title: 'Voice trading is coming soon',
-      detail: 'You will hold the orb and say trades like “buy half a SOL of this”.',
-      autoClose: 6000,
-    });
-  }, [toast]);
+  // what's on screen, for voice questions ("what's the market cap?")
+  const ctxRef = useRef({});
+  const priceUsd = Number(pair?.priceUsd) || null;
+  ctxRef.current = {
+    screen: view === 'token' ? 'coin' : view,
+    coin:
+      view === 'token' && mint
+        ? {
+            mint,
+            name: pair?.baseToken?.name || null,
+            symbol: pair?.baseToken?.symbol || null,
+            image: pair?.info?.imageUrl || null,
+            market_cap_usd: pair?.marketCap ?? pair?.fdv ?? null,
+            price_usd: priceUsd,
+            liquidity_usd: pair?.liquidity?.usd ?? null,
+            volume_usd: pair?.volume || null,
+            price_change_pct: pair?.priceChange || null,
+            trades: pair?.txns || null,
+            pool: pair ? dexLabel(pair.dexId) : null,
+            on_bonding_curve: String(pair?.dexId || '').toLowerCase() === 'pumpfun',
+            age: pair?.pairCreatedAt ? age(pair.pairCreatedAt) : null,
+            top10_holders_pct: holders?.top10Pct ?? null,
+            largest_holders: (holders?.rows || []).slice(0, 10).map((h) => ({
+              pct: h.pct === null ? null : Math.round(h.pct * 100) / 100,
+              type: h.kind || 'wallet',
+            })),
+          }
+        : null,
+    wallet: wallet
+      ? {
+          connected: true,
+          sol_balance: solBal,
+          holding_this_coin: view === 'token' ? tokenBal : null,
+          holding_value_usd: view === 'token' && tokenBal && priceUsd ? tokenBal * priceUsd : null,
+        }
+      : { connected: false },
+    sol_price_usd: solPrice,
+  };
+  const getContext = useCallback(() => ctxRef.current, []);
 
   return (
     <div className="app">
@@ -337,7 +369,22 @@ export default function App() {
         )}
       </main>
 
-      <StatusBar solPrice={solPrice} onVoice={onVoice} />
+      <StatusBar
+        solPrice={solPrice}
+        voice={
+          <VoiceDock
+            getContext={getContext}
+            openToken={openToken}
+            navigate={(v) => go(v)}
+            wallet={wallet}
+            connect={connect}
+            solBal={solBal}
+            solPrice={solPrice}
+            toast={toast}
+            onTraded={onTraded}
+          />
+        }
+      />
       <Toasts items={toasts} onDismiss={toast.dismiss} />
     </div>
   );

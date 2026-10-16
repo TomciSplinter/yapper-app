@@ -1,13 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { VersionedTransaction } from '@solana/web3.js';
-import { rpc, getProvider, b64ToBytes, bytesToB64, waitForConfirm, SOL_MINT } from '../_lib/chain';
+import { getProvider, SOL_MINT } from '../_lib/chain';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
+import { executeTrade, readTradeSettings, saveTradeSettings } from '../_lib/trade';
 
 const BUY_PRESETS = ['0.1', '0.25', '0.5', '1'];
 const SELL_PRESETS = ['25', '50', '75', '100'];
-const SETTINGS_KEY = 'yapper:trade-settings';
 
 function clean(v) {
   return v.replace(',', '.').replace(/[^0-9.]/g, '');
@@ -22,19 +21,17 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
   const [error, setError] = useState('');
 
   // remember trade settings in this browser
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    try {
-      const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-      if (s.slippage) setSlippage(String(s.slippage));
-      if (s.prioFee) setPrioFee(String(s.prioFee));
-      if (s.buyAmt) setBuyAmt(String(s.buyAmt));
-    } catch {}
+    const s = readTradeSettings();
+    setSlippage(String(s.slippage));
+    setPrioFee(String(s.prioFee));
+    setBuyAmt(String(s.buyAmt));
+    setLoaded(true);
   }, []);
   useEffect(() => {
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ slippage, prioFee, buyAmt }));
-    } catch {}
-  }, [slippage, prioFee, buyAmt]);
+    if (loaded) saveTradeSettings({ slippage, prioFee, buyAmt });
+  }, [loaded, slippage, prioFee, buyAmt]);
 
   useEffect(() => setError(''), [side, mint]);
 
@@ -88,69 +85,19 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
     if (!(fee >= 0) || fee > 0.01) return setError('Set a priority fee between 0 and 0.01 SOL.');
 
     setBusy(true);
-    const id = toast.show({ kind: 'pending', title: isBuy ? `Buying ${sym}` : `Selling ${sym}`, detail: 'Preparing the transaction' });
     try {
-      const r = await fetch('/api/trade', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          publicKey: wallet,
-          mint,
-          action: side,
-          amount: isBuy ? buyNum : `${sellNum}%`,
-          slippage: slip,
-          priorityFee: fee,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.tx) throw new Error(j.error || 'Could not prepare the transaction. Try again.');
-
-      const tx = VersionedTransaction.deserialize(b64ToBytes(j.tx));
-      toast.update(id, { detail: 'Approve it in your wallet' });
-      const signed = await provider.signTransaction(tx);
-
-      toast.update(id, { detail: 'Sending to Solana' });
-      const sig = await rpc('sendTransaction', [
-        bytesToB64(signed.serialize()),
-        { encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 },
-      ]);
-
-      toast.update(id, { detail: 'Waiting for confirmation', sig });
-      const ok = await waitForConfirm(sig);
-      if (ok === true) {
-        toast.update(id, {
-          kind: 'success',
-          title: isBuy ? `Bought ${sym}` : `Sold ${sellNum}% of ${sym}`,
-          detail: isBuy ? `Spent ${buyNum} SOL` : estimate ? `Received about ${estimate}` : null,
-          sig,
-          autoClose: 8000,
-        });
-      } else if (ok === false) {
-        toast.update(id, {
-          kind: 'error',
-          title: isBuy ? 'Buy failed' : 'Sell failed',
-          detail: 'The price moved past your slippage limit. Raise slippage or try again.',
-          sig,
-          autoClose: 15000,
-        });
-      } else {
-        toast.update(id, {
-          kind: 'pending',
-          title: 'Still confirming',
-          detail: 'Solana is slow right now. Open the transaction to check its status.',
-          sig,
-          autoClose: 15000,
-        });
-      }
-      onTraded();
-    } catch (e) {
-      const msg = String(e?.message || e);
-      const cancelled = /reject|denied|cancel/i.test(msg);
-      toast.update(id, {
-        kind: cancelled ? 'info' : 'error',
-        title: cancelled ? 'Transaction cancelled' : isBuy ? 'Buy failed' : 'Sell failed',
-        detail: cancelled ? null : msg.slice(0, 180),
-        autoClose: cancelled ? 4000 : 12000,
+      await executeTrade({
+        wallet,
+        mint,
+        side,
+        amountSol: buyNum,
+        percent: sellNum,
+        symbol: pair?.baseToken?.symbol,
+        slippage: slip,
+        prioFee: fee,
+        toast,
+        onTraded,
+        receiveHint: estimate,
       });
     } finally {
       setBusy(false);
