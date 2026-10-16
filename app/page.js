@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { VersionedTransaction } from '@solana/web3.js';
+import PriceChart from './PriceChart';
 
 /* ---------- helpers ---------- */
 
@@ -326,9 +327,7 @@ export default function Terminal() {
   const sym = pair?.baseToken?.symbol;
   const ch24 = pair?.priceChange?.h24;
   const ch1 = pair?.priceChange?.h1;
-  const chartSrc = pair?.pairAddress
-    ? `https://dexscreener.com/solana/${pair.pairAddress}?embed=1&loadChartSettings=0&trades=0&tabs=0&info=0&chartLeftToolbar=0&chartTheme=dark&theme=dark&chartStyle=1&chartType=usd&interval=1`
-    : null;
+  const supply = pair?.marketCap && Number(pair?.priceUsd) > 0 ? pair.marketCap / Number(pair.priceUsd) : 0;
 
   return (
     <div className="shell">
@@ -400,16 +399,12 @@ export default function Terminal() {
       <main className="main">
         <section className="chart-col" aria-label="Chart">
           <div className="chart-frame">
-            {chartSrc ? (
-              <iframe key={pair.pairAddress} src={chartSrc} title={`${sym || 'Token'} chart`} />
+            {mint ? (
+              <PriceChart mint={mint} pairAddress={pair?.pairAddress} supply={supply} symbol={sym} />
             ) : (
               <div className="empty">
                 <img src="/orb.png" alt="" />
-                {pairState === 'loading' && <span>Loading token…</span>}
-                {pairState === 'none' && (
-                  <span>No chart yet for this token. It may be brand new. You can still trade it.</span>
-                )}
-                {pairState === 'idle' && <span>Paste a contract address to load a chart.</span>}
+                <span>Search a coin or paste a contract address to load a chart.</span>
               </div>
             )}
           </div>

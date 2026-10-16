@@ -57,7 +57,16 @@ input { font-family: inherit; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 18px; }
 .panel h2 { margin: 0 0 14px; font-size: 13px; font-weight: 500; color: var(--mint); letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--font-mono), monospace; }
 .chart-frame { position: relative; width: 100%; height: min(62vh, 560px); min-height: 360px; border-radius: 20px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
-.chart-frame iframe { width: 100%; height: 100%; border: 0; }
+.pc { display: flex; flex-direction: column; height: 100%; }
+.pc-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.pc-group { display: flex; gap: 4px; background: #000; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.pc-btn { height: 30px; min-width: 40px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; font-family: var(--font-mono), monospace; }
+.pc-btn.on { background: var(--panel-2); color: var(--mint); }
+.pc-btn:hover:not(:disabled):not(.on) { color: var(--text); }
+.pc-area { position: relative; flex: 1; min-height: 0; }
+.pc-canvas { position: absolute; inset: 0; }
+.pc-embed { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.pc-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); font-size: 14px; pointer-events: none; }
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; text-align: center; color: var(--muted); padding: 24px; }
 .empty img { width: 120px; height: 120px; opacity: 0.9; }
 
