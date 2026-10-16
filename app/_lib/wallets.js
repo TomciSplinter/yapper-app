@@ -23,7 +23,7 @@ import { rpc, b64ToBytes, bytesToB64, getProvider } from './chain';
 
 const VAULT_KEY = 'yapper:vault:v1';
 const ACTIVE_KEY = 'yapper:active-wallet';
-const REMEMBER_KEY = 'yapper:remember-unlock';
+const REMEMBER_KEY = 'yapper:remember-unlock:v2'; // v2: on by default
 const LOCK_SIGNAL = 'yapper:vault-locked';
 const UNLOCK_SIGNAL = 'yapper:vault-unlocked';
 const CHECK_TEXT = 'yapper-vault-v1';
@@ -221,12 +221,12 @@ function lastLockAt() {
   }
 }
 
-// "Stay unlocked for 12 hours" is opt-in.
+// "Stay unlocked for 12 hours" is on unless the user unticked it.
 export function rememberChoice() {
   try {
-    return localStorage.getItem(REMEMBER_KEY) === '1';
+    return localStorage.getItem(REMEMBER_KEY) !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 

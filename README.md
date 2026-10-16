@@ -36,7 +36,7 @@ Private keys never touch the server, whichever wallet is used.
 **Yapper wallets** (`app/_lib/wallets.js`) are created or imported in the browser:
 
 - Keys are encrypted with the user's password (PBKDF2-SHA256, 600k rounds, then AES-256-GCM, each key bound to its address) and stored only in that browser's localStorage. There is no password reset: the private key backups are the recovery.
-- Unlocking keeps a non-extractable key in memory, shared between open Yapper tabs, for up to 12 hours. Only if the user ticks "stay unlocked" is it also kept in IndexedDB so it survives restarts.
+- Unlocking keeps a non-extractable key in memory, shared between open Yapper tabs, for up to 12 hours. "Stay unlocked" (on by default, can be unticked) also keeps it in IndexedDB so it survives restarts for those 12 hours.
 - Exporting a key, withdrawing SOL and removing a wallet always ask for the password. New wallets show their key once and stay flagged "Not backed up" until the user confirms or exports it.
 - Withdrawals refuse coin, token and program addresses, where SOL would be lost.
 

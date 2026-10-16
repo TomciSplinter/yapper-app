@@ -4,8 +4,12 @@
 // preview before you approve; built-in wallets sign instantly, so first we
 // make sure the transaction can only do the trade that was asked for:
 //   - this wallet pays and is the only signer
-//   - only known Solana, token and DEX programs are called; the token program
-//     only to set up, wrap and close the wallet's own accounts
+//   - the token program is only used to set up, wrap and close the wallet's
+//     own accounts, and the system program can't reassign the wallet
+//   - a program Yapper doesn't recognise (PumpPortal sometimes routes through
+//     new pump.fun or router programs) is allowed only if it never gets the
+//     wallet's signature, or if the simulated result is a fair trade: the coins
+//     or SOL received must match the pool's own price within your slippage
 //   - SOL only moves into the wallet's own accounts, apart from fees and tips
 //     worth at most 1.5% of the trade
 //   - the wallet's other coins can't shrink, and no token account changes
@@ -57,6 +61,11 @@ const SYSTEM_OK = new Set([0, 2, 3]);
 // to this wallet), sync native (17), and read-only helpers (21-24)
 const TOKEN_OK = new Set([1, 9, 16, 17, 18, 21, 22, 23, 24]);
 const PUMP_BUY = [102, 6, 61, 18, 1, 218, 235, 234];
+const STAKE = 'Stake11111111111111111111111111111111111111';
+const VOTE = 'Vote111111111111111111111111111111111111111';
+// Fees between the pool price and what a trade gets: pump.fun ~1.25%,
+// PumpPortal 0.5% (taken as SOL), plus rounding. Kept generous.
+const FAIR_FLOOR = 0.93;
 
 const LAMPORTS = 1e9;
 const FEE_SHARE = 0.015; // PumpPortal takes 0.5%
@@ -148,13 +157,20 @@ export async function checkTrade(tx, { wallet, mint, side, amountSol, percent, s
   let cuPrice = 0;
   let nonBudget = 0;
   const outflows = []; // SOL the system program sends from this wallet: { to, lamports }
+  const unknown = new Set(); // programs Yapper doesn't recognise
+  let unknownSigns = false; // one of them gets this wallet as an account (and so its signature)
   const closedToWallet = new Set(); // token accounts this transaction closes back into the wallet
   for (const ix of msg.compiledInstructions) {
     if (ix.programIdIndex >= nStatic) throw blocked('it loads a program from a lookup table');
     const program = keys[ix.programIdIndex];
     const d = ix.data || new Uint8Array();
     const acct = (n) => all[ix.accountKeyIndexes[n]];
-    if (!KNOWN_PROGRAMS.has(program)) throw blocked(`it calls a program Yapper doesn't know (${shortAddr(program)})`);
+    if (!KNOWN_PROGRAMS.has(program)) {
+      unknown.add(program);
+      if (ix.accountKeyIndexes.some((k) => all[k] === wallet)) unknownSigns = true;
+      nonBudget++;
+      continue;
+    }
     if (program === COMPUTE_BUDGET) {
       if (d[0] === 2) cuLimit = u32(d, 1);
       if (d[0] === 3) cuPrice = u64(d, 1);
@@ -186,13 +202,22 @@ export async function checkTrade(tx, { wallet, mint, side, amountSol, percent, s
   const networkFee = 5000 + priority;
 
   const maxSpend = (isBuy ? amount * (1 + slip / 100) * 1.05 * LAMPORTS : 0) + priority + FIXED_MARGIN;
+  if (unknown.size) console.warn('[yapper] trade uses programs Yapper does not recognise:', [...unknown].join(', '));
+  let curvePda = null;
+  if (unknownSigns) {
+    try {
+      curvePda = PublicKey.findProgramAddressSync([new TextEncoder().encode('bonding-curve'), new PublicKey(mint).toBytes()], new PublicKey(PUMP))[0].toBase58();
+    } catch {
+      curvePda = null;
+    }
+  }
   const encoded = bytesToB64(tx.serialize());
 
   // Balances before and the simulated result, from the same moment on the node.
   // If another trade lands in between it can look like we spent more, so a
   // breach is checked once more before blocking.
   for (let attempt = 0; ; attempt++) {
-    const [pre, sim] = await rpcBatch([
+    const [pre, sim, extra] = await rpcBatch([
       ['getMultipleAccounts', [writable, { encoding: 'base64', commitment: 'confirmed' }]],
       [
         'simulateTransaction',
@@ -207,6 +232,7 @@ export async function checkTrade(tx, { wallet, mint, side, amountSol, percent, s
           },
         ],
       ],
+      ...(curvePda ? [['getMultipleAccounts', [[curvePda], { encoding: 'base64', commitment: 'confirmed' }]]] : []),
     ]);
     const v = sim?.value;
     if (!v) throw unverified();
@@ -215,6 +241,14 @@ export async function checkTrade(tx, { wallet, mint, side, amountSol, percent, s
     const before = pre?.value?.[0]?.lamports;
     const after = v.accounts[0]?.lamports;
     if (writable[0] !== wallet || typeof before !== 'number' || typeof after !== 'number') throw unverified();
+    // the wallet must stay a plain wallet
+    const w = v.accounts[0];
+    if (w.owner !== SYSTEM || (w.data?.[0] || '') !== '') throw blocked('it tries to change how your wallet works');
+    if (unknown.size) {
+      for (const a of pre?.value || []) {
+        if (a && (a.owner === STAKE || a.owner === VOTE)) throw blocked('it touches a staking account');
+      }
+    }
 
     // the wallet's token accounts, before and after
     let coinBefore = 0n;
@@ -266,8 +300,48 @@ export async function checkTrade(tx, { wallet, mint, side, amountSol, percent, s
     const tradeValue = isBuy ? amount * LAMPORTS : Math.max(0, gained + networkFee + external);
     if (external > tradeValue * FEE_SHARE + FEE_FLOOR) throw blocked(`it sends ${(external / LAMPORTS).toFixed(4)} SOL to an account that isn't yours`);
 
+    // A program we don't recognise had this wallet's signature: only accept a
+    // fair result, measured against the pool's own reserves before the trade.
+    if (unknownSigns) {
+      const res = reserves(writable, pre?.value, extra?.value?.[0], mint, wallet);
+      if (!res) throw blocked(`it goes through a program Yapper doesn't know (${shortAddr([...unknown][0])}) and the price couldn't be checked`);
+      const floor = (1 - slip / 100) * FAIR_FLOOR;
+      if (isBuy) {
+        const a = amount * LAMPORTS;
+        const fair = (res.tokens * a) / (res.sol + a);
+        if (Number(coinAfter - coinBefore) < fair * floor) throw blocked('you would get far fewer coins than the pool price gives');
+      } else {
+        const t = Number(coinBefore - coinAfter);
+        const fair = (res.sol * t) / (res.tokens + t);
+        if (gained + networkFee < fair * floor - FEE_FLOOR) throw blocked('you would get far less SOL than the pool price gives');
+      }
+    }
+
     const spent = -gained;
     if (spent <= maxSpend) return { spentLamports: spent };
     if (attempt >= 1) throw blocked(`it would take ${(spent / LAMPORTS).toFixed(4)} SOL, more than this trade allows`);
   }
+}
+
+// Pool reserves before the trade, in raw coin units and lamports.
+// pump.fun bonding curve: read from the curve account. Otherwise (PumpSwap and
+// other pools): the largest coin and wrapped-SOL token accounts the trade
+// writes to that don't belong to this wallet.
+function reserves(writable, preAccounts, curve, mint, wallet) {
+  if (curve?.owner === PUMP && curve.data?.[0]) {
+    const d = b64ToBytes(curve.data[0]);
+    const vTokens = Number(u64n(d, 8));
+    const vSol = Number(u64n(d, 16));
+    const complete = d.length > 48 ? d[48] === 1 : false;
+    if (!complete && vTokens > 0 && vSol > 0) return { tokens: vTokens, sol: vSol };
+  }
+  let tokens = 0;
+  let sol = 0;
+  (preAccounts || []).forEach((a) => {
+    const t = tokenAccount(a);
+    if (!t || t.owner === wallet) return;
+    if (t.mint === mint) tokens = Math.max(tokens, Number(t.amount));
+    else if (t.mint === SOL_MINT) sol = Math.max(sol, Number(t.amount));
+  });
+  return tokens > 0 && sol > 0 ? { tokens, sol } : null;
 }
