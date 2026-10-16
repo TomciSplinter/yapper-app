@@ -138,7 +138,7 @@ function FilterMenu({ filter, onChange }) {
 
 export default function Discover({ onOpenToken, onQuickBuy }) {
   const [tab, setTab] = useState('trending');
-  const [frame, setFrame] = useState('m5');
+  const [frame, setFrame] = useState('h1');
   const [sorts, setSorts] = useState({ trending: { key: 'vol', dir: -1 }, top: { key: 'rank', dir: -1 } });
   const [lists, setLists] = useState({});
   const [errors, setErrors] = useState({});
