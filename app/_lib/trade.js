@@ -8,6 +8,7 @@ import { rpc, b64ToBytes, bytesToB64, waitForConfirm } from './chain';
 import { ensureUnlocked, getState, signAs, signerKind } from './wallets';
 import { checkTrade } from './guard';
 import { recordTrade } from './fills';
+import { rememberCoin } from './known';
 
 const SETTINGS_KEY = 'yapper:trade-settings';
 const DEFAULTS = { slippage: '10', prioFee: '0.0005', buyAmt: '0.1' };
@@ -90,6 +91,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
       { encoding: 'base64', skipPreflight: local, preflightCommitment: 'confirmed', maxRetries: 3 },
     ]);
 
+    rememberCoin(wallet, mint); // balance reads check this coin's accounts directly from now on
     toast.update(id, { detail: 'Waiting for confirmation', sig });
     const ok = await waitForConfirm(sig);
     onTraded?.();

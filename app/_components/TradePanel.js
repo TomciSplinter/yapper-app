@@ -13,7 +13,7 @@ function clean(v) {
   return v.replace(',', '.').replace(/[^0-9.]/g, '');
 }
 
-export default function TradePanel({ mint, pair, side, onSideChange, wallet, solBal, tokenBal, position, supply, solPrice, onConnect, onTraded, toast }) {
+export default function TradePanel({ mint, pair, side, onSideChange, wallet, solBal, tokenBal, tokenBalErr, position, supply, solPrice, onConnect, onTraded, toast }) {
   const [buyAmt, setBuyAmt] = useState('0.1');
   const [sellPct, setSellPct] = useState('50');
   const [slippage, setSlippage] = useState('10');
@@ -86,8 +86,8 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
         let fresh;
         try {
           fresh = (await loadHolding(wallet, mint)).amount;
-        } catch {
-          return setError("Couldn't read your balance right now. Try again in a moment.");
+        } catch (e) {
+          return setError(`Couldn't read your ${sym} balance (${String(e?.message || 'unknown error').slice(0, 80)}). Try again in a moment.`);
         }
         if (!(fresh > 0)) return setError(`You don't hold any ${sym}.`);
         onTraded?.();
@@ -148,7 +148,15 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
             </>
           ) : (
             <>
-              Holding <b>{tokenBal === null ? '—' : fmtAmount(tokenBal)}</b> {pair?.baseToken?.symbol || ''}
+              Holding{' '}
+              {tokenBal === null && tokenBalErr ? (
+                <b className="tp-bal-err" title={tokenBalErr}>
+                  can't read balance
+                </b>
+              ) : (
+                <b>{tokenBal === null ? '—' : fmtAmount(tokenBal)}</b>
+              )}{' '}
+              {pair?.baseToken?.symbol || ''}
             </>
           )}
         </span>

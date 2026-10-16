@@ -121,6 +121,32 @@ export async function rpcBatchSettled(calls) {
   });
 }
 
+// Confirmed transactions by signature (10 per request); missing ones are left out.
+export async function getTransactions(sigs) {
+  const out = new Map();
+  for (let i = 0; i < sigs.length; i += 10) {
+    const chunk = sigs.slice(i, i + 10);
+    const res = await rpcBatchSettled(
+      chunk.map((s) => ['getTransaction', [s, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]])
+    ).catch(() => chunk.map(() => ({ ok: false })));
+    res.forEach((r, j) => {
+      if (r.ok && r.result) out.set(chunk[j], r.result);
+    });
+  }
+  return out;
+}
+
+// All account addresses of a transaction from getTransaction (json encoding)
+export function txAccountKeys(tx) {
+  const msg = tx?.transaction?.message || {};
+  const meta = tx?.meta || {};
+  return [
+    ...(msg.accountKeys || []).map((k) => (typeof k === 'string' ? k : k?.pubkey)),
+    ...(meta.loadedAddresses?.writable || []),
+    ...(meta.loadedAddresses?.readonly || []),
+  ];
+}
+
 export function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);

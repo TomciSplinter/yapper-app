@@ -56,6 +56,7 @@ export default function App() {
   const wallet = activePubkey(wallets);
   const [solBal, setSolBal] = useState(null);
   const [tokenBal, setTokenBal] = useState(null);
+  const [tokenBalErr, setTokenBalErr] = useState('');
   const [balTick, setBalTick] = useState(0);
   const [solPrice, setSolPrice] = useState(null);
 
@@ -214,6 +215,7 @@ export default function App() {
 
   useEffect(() => {
     setTokenBal(null);
+    setTokenBalErr('');
   }, [wallet, mint]);
 
   useEffect(() => {
@@ -222,8 +224,14 @@ export default function App() {
     const load = async () => {
       try {
         const h = await loadHolding(wallet, mint);
-        if (!cancelled) setTokenBal(h.amount);
-      } catch {}
+        if (!cancelled) {
+          setTokenBal(h.amount);
+          setTokenBalErr('');
+        }
+      } catch (e) {
+        console.warn('[yapper] balance read failed:', e?.message);
+        if (!cancelled) setTokenBalErr(String(e?.message || 'unknown error'));
+      }
     };
     load();
     const t = setInterval(() => {
@@ -394,6 +402,7 @@ export default function App() {
                   wallet={wallet}
                   solBal={solBal}
                   tokenBal={tokenBal}
+                  tokenBalErr={tokenBalErr}
                   position={position}
                   supply={supply}
                   solPrice={solPrice}

@@ -4,7 +4,8 @@
 // user rather than to the whole site.
 
 import { rpc, rpcBatchSettled, SOL_MINT, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
-import { readTokenAccount, readMintDecimals, toUi } from './holdings';
+import { readTokenAccount, readMintDecimals, toUi, ataAddress } from './holdings';
+import { knownMints, knownAccounts, scanWallet } from './known';
 
 const DS = 'https://api.dexscreener.com';
 const GT = 'https://api.geckoterminal.com/api/v2/networks/solana';
@@ -200,25 +201,51 @@ export async function withPool(mint, pairAddress, fn, isCancelled) {
 
 // Every coin the wallet holds. Token accounts are read raw from both token
 // programs (classic and Token-2022) and decimals from each mint, so a coin
-// can't go missing because of how an RPC parses it. Coins DexScreener
-// doesn't list yet still show, just without a price.
+// can't go missing because of how an RPC parses it. Coins traded through
+// Yapper are also read by address, in case the RPC's index misses them.
+// Coins DexScreener doesn't list yet still show, just without a price.
 export async function loadPositions(wallet) {
   const cfg = { encoding: 'base64', commitment: 'confirmed' };
+  await scanWallet(wallet).catch(() => []); // learn coins from recent transactions
   const [classic, t22] = await rpcBatchSettled([
     ['getTokenAccountsByOwner', [wallet, { programId: TOKEN_PROGRAM }, cfg]],
     ['getTokenAccountsByOwner', [wallet, { programId: TOKEN_2022_PROGRAM }, cfg]],
   ]);
-  if (!classic.ok && !t22.ok) throw new Error(classic.error);
+  if (!classic.ok) console.warn('[yapper] token accounts (classic) failed:', classic.error);
+  if (!t22.ok) console.warn('[yapper] token accounts (Token-2022) failed:', t22.error);
 
+  const seen = new Set(); // token account addresses already counted
   const raw = new Map(); // mint -> BigInt
+  const add = (addr, t) => {
+    if (!t || t.owner !== wallet || t.mint === SOL_MINT || t.raw === 0n || seen.has(addr)) return;
+    seen.add(addr);
+    raw.set(t.mint, (raw.get(t.mint) || 0n) + t.raw);
+  };
   for (const r of [classic, t22]) {
     if (!r.ok) continue;
-    for (const it of r.result?.value || []) {
-      const t = readTokenAccount(it.account);
-      if (!t || t.owner !== wallet || t.mint === SOL_MINT || t.raw === 0n) continue;
-      raw.set(t.mint, (raw.get(t.mint) || 0n) + t.raw);
+    for (const it of r.result?.value || []) add(it.pubkey, readTokenAccount(it.account));
+  }
+
+  // coins traded here: read their accounts by address too
+  const direct = [];
+  for (const m of knownMints(wallet)) {
+    for (const a of [ataAddress(wallet, m, TOKEN_PROGRAM), ataAddress(wallet, m, TOKEN_2022_PROGRAM), ...knownAccounts(wallet, m)]) {
+      if (a && !seen.has(a) && !direct.includes(a)) direct.push(a);
     }
   }
+  let directOk = false;
+  for (let i = 0; i < direct.length; i += 100) {
+    const chunk = direct.slice(i, i + 100);
+    try {
+      const r = await rpc('getMultipleAccounts', [chunk, cfg]);
+      (r?.value || []).forEach((a, j) => add(chunk[j], readTokenAccount(a)));
+      directOk = true;
+    } catch (e) {
+      console.warn('[yapper] reading traded coins failed:', e?.message);
+    }
+  }
+  // nothing could be read at all: say so instead of showing an empty wallet
+  if (!classic.ok && !t22.ok && !directOk) throw new Error(classic.error);
   const mints = [...raw.keys()].slice(0, 150);
   if (!mints.length) return [];
 

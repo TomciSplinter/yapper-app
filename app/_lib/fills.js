@@ -7,8 +7,9 @@
 // Parsed transactions never change, so they're cached in this browser.
 
 import { useEffect, useState } from 'react';
-import { rpcBatchSettled, SOL_MINT } from './chain';
+import { rpcBatchSettled, getTransactions, txAccountKeys, SOL_MINT } from './chain';
 import { loadHolding } from './holdings';
+import { rememberCoin } from './known';
 
 const KEY = (w) => `yapper:fills:v1:${w}`;
 const MAX_CACHE = 3000;
@@ -57,16 +58,10 @@ const rawOf = (b) => {
 };
 
 // One confirmed transaction -> this wallet's trade in `mint`, or null.
-// Also returns `other` = true when the coin moved but not into or out of this wallet.
 export function parseFill(sig, tx, wallet, mint) {
   const meta = tx?.meta;
   if (!meta || meta.err) return null;
-  const msg = tx.transaction?.message || {};
-  const keys = [
-    ...(msg.accountKeys || []).map((k) => (typeof k === 'string' ? k : k?.pubkey)),
-    ...(meta.loadedAddresses?.writable || []),
-    ...(meta.loadedAddresses?.readonly || []),
-  ];
+  const keys = txAccountKeys(tx);
   const w = keys.indexOf(wallet);
   if (w < 0) return null;
 
@@ -107,22 +102,11 @@ export function parseFill(sig, tx, wallet, mint) {
     time: (tx.blockTime || Math.floor(Date.now() / 1000)) * 1000,
     tokens, // + received, - sent
     sol: lamports / 1e9, // + received, - spent
+    accounts: [...coinAccounts].map((i) => keys[i]).filter(Boolean), // where the coin sits
   };
 }
 
-async function fetchTxs(sigs) {
-  const out = new Map();
-  for (let i = 0; i < sigs.length; i += 10) {
-    const chunk = sigs.slice(i, i + 10);
-    const res = await rpcBatchSettled(
-      chunk.map((s) => ['getTransaction', [s, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]])
-    ).catch(() => chunk.map(() => ({ ok: false })));
-    res.forEach((r, j) => {
-      if (r.ok && r.result) out.set(chunk[j], r.result);
-    });
-  }
-  return out;
-}
+const fetchTxs = getTransactions;
 
 export function cachedFills(wallet, mint) {
   return fillsFor(wallet, mint);
@@ -153,7 +137,11 @@ export async function syncFills(wallet, mint, holding) {
   }
   if (sigs.length) {
     const txs = await fetchTxs(sigs.slice(0, MAX_NEW_PER_SYNC));
-    for (const [sig, tx] of txs) c[sig] = parseFill(sig, tx, wallet, mint) || 0;
+    for (const [sig, tx] of txs) {
+      const f = parseFill(sig, tx, wallet, mint);
+      c[sig] = f || 0;
+      if (f?.accounts?.length) rememberCoin(wallet, mint, f.accounts);
+    }
     save(wallet);
     emit(wallet, mint);
   }
@@ -168,6 +156,7 @@ export async function recordTrade(wallet, mint, sig) {
     if (tx) {
       const fill = parseFill(sig, tx, wallet, mint);
       cache(wallet)[sig] = fill || 0;
+      if (fill?.accounts?.length) rememberCoin(wallet, mint, fill.accounts);
       save(wallet);
       emit(wallet, mint);
       return fill || { sig, mint, side: 'none', tokens: 0, sol: 0, time: Date.now() };

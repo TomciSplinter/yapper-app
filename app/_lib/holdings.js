@@ -1,13 +1,16 @@
 // How much of a coin a wallet holds, read straight from the chain.
 //
 // Two independent reads in one request, so one RPC quirk can't hide a coin:
-//   1. every token account the wallet owns for this mint (raw, not parsed)
-//   2. the wallet's associated token accounts under both token programs
-//      (classic and Token-2022, which newer pump.fun coins use)
+//   1. every token account the wallet owns for this mint (the RPC's index)
+//   2. the accounts themselves, read by address: the wallet's associated
+//      token accounts under both token programs (classic and Token-2022,
+//      which newer pump.fun coins use) plus any account a Yapper trade put
+//      this coin in
 // Amounts come from the account bytes and decimals from the mint itself.
 
 import { PublicKey } from '@solana/web3.js';
 import { rpcBatchSettled, b64ToBytes, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
+import { knownAccounts, scanWallet } from './known';
 
 export const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAMS = new Set([TOKEN_PROGRAM, TOKEN_2022_PROGRAM]);
@@ -53,12 +56,15 @@ export function toUi(raw, decimals) {
 // -> { amount, raw, decimals, accounts: [address] }. Throws only if nothing could be read.
 export async function loadHolding(wallet, mint) {
   const atas = [ataAddress(wallet, mint, TOKEN_PROGRAM), ataAddress(wallet, mint, TOKEN_2022_PROGRAM)].filter(Boolean);
+  const direct = [...new Set([...atas, ...knownAccounts(wallet, mint)])];
   const cfg = { encoding: 'base64', commitment: 'confirmed' };
-  const [byOwner, direct] = await rpcBatchSettled([
+  const [byOwner, byAddress] = await rpcBatchSettled([
     ['getTokenAccountsByOwner', [wallet, { mint }, cfg]],
-    ['getMultipleAccounts', [[mint, ...atas], cfg]],
+    ['getMultipleAccounts', [[mint, ...direct], cfg]],
   ]);
-  if (!byOwner.ok && !direct.ok) throw new Error(byOwner.error || direct.error);
+  if (!byOwner.ok) console.warn('[yapper] token account lookup failed:', byOwner.error);
+  if (!byAddress.ok) console.warn('[yapper] token account read failed:', byAddress.error);
+  if (!byOwner.ok && !byAddress.ok) throw new Error(byAddress.error || byOwner.error);
 
   const found = new Map(); // address -> raw
   if (byOwner.ok) {
@@ -68,13 +74,28 @@ export async function loadHolding(wallet, mint) {
     }
   }
   let decimals = null;
-  if (direct.ok) {
-    const [mintAcc, ...ataAccs] = direct.result?.value || [];
+  if (byAddress.ok) {
+    const [mintAcc, ...accs] = byAddress.result?.value || [];
     decimals = readMintDecimals(mintAcc);
-    ataAccs.forEach((a, i) => {
+    accs.forEach((a, i) => {
       const t = readTokenAccount(a);
-      if (t && t.mint === mint && t.owner === wallet) found.set(atas[i], t.raw);
+      if (t && t.mint === mint && t.owner === wallet) found.set(direct[i], t.raw);
     });
+  }
+  // Nothing found: the coin may sit in an account the RPC's index doesn't
+  // list. Check the wallet's recent transactions for where it went.
+  if (!found.size) {
+    const learned = await scanWallet(wallet).catch(() => []);
+    const extra = learned.includes(mint) ? knownAccounts(wallet, mint).filter((a) => !direct.includes(a)) : [];
+    if (extra.length) {
+      const r = await rpcBatchSettled([['getMultipleAccounts', [extra, cfg]]]).catch(() => [{ ok: false }]);
+      if (r[0].ok) {
+        (r[0].result?.value || []).forEach((a, i) => {
+          const t = readTokenAccount(a);
+          if (t && t.mint === mint && t.owner === wallet) found.set(extra[i], t.raw);
+        });
+      }
+    }
   }
   if (decimals === null) decimals = 6; // pump.fun coins; only used if the mint read failed
   const raw = [...found.values()].reduce((s, v) => s + v, 0n);
