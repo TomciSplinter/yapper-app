@@ -1304,6 +1304,13 @@ p {
   height: 12px;
   background: var(--rule-2);
 }
+.sb-sol-m {
+  display: none;
+}
+.sb-right b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
 .sb-right a:hover,
 .sb-left a:hover {
   color: var(--ink);
@@ -1360,6 +1367,10 @@ p {
   }
 }
 .sb-voice-note {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1600,14 +1611,11 @@ p {
   .coin-name {
     max-width: 140px;
   }
-  .sb-right,
   .sb-voice-note {
     display: none;
   }
-  .sb-voice {
-    left: auto;
-    right: 12px;
-    transform: none;
+  .sb-sol-m {
+    display: inline;
   }
   .toasts {
     right: 12px;

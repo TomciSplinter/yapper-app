@@ -26,13 +26,13 @@ export default function StatusBar({ solPrice, onVoice }) {
         <span className="sb-conn">
           <span className={`sb-dot ${state}`} aria-hidden="true" />
           {state === 'ok' ? 'Live' : state === 'down' ? 'Offline' : 'Connecting'}
-          {state === 'ok' && health.latency !== null && <span className="muted">{health.latency} ms</span>}
+          {state === 'ok' && health.latency !== null && <span className="muted hide-sm">{health.latency} ms</span>}
         </span>
         <span className="sb-div" aria-hidden="true" />
-        <span>
+        <span className="hide-sm">
           SOL <b>{solPrice ? `$${solPrice.toFixed(2)}` : '—'}</b>
         </span>
-        <span className="sb-div" aria-hidden="true" />
+        <span className="sb-div hide-sm" aria-hidden="true" />
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" title="Charts by TradingView">
           <span className="hide-sm">Charts by </span>TradingView
         </a>
@@ -49,10 +49,13 @@ export default function StatusBar({ solPrice, onVoice }) {
       </div>
 
       <div className="sb-right">
-        <a href="https://x.com/YapperTrade" target="_blank" rel="noreferrer">
+        <span className="sb-sol-m">
+          SOL <b>{solPrice ? `$${solPrice.toFixed(2)}` : '—'}</b>
+        </span>
+        <a className="hide-sm" href="https://x.com/YapperTrade" target="_blank" rel="noreferrer">
           @YapperTrade
         </a>
-        <a href="https://yapper.trade" target="_blank" rel="noreferrer">
+        <a className="hide-sm" href="https://yapper.trade" target="_blank" rel="noreferrer">
           yapper.trade
         </a>
       </div>
