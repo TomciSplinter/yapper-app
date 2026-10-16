@@ -3,8 +3,6 @@
 // and ranks by how well the name/ticker matches, then by liquidity + volume.
 // The voice layer calls this same endpoint later ("open bonk").
 
-export const dynamic = 'force-dynamic';
-
 function norm(s) {
   return (s || '').toLowerCase().replace(/^\$/, '').replace(/[^a-z0-9]/g, '');
 }

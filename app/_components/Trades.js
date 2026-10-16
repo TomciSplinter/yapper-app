@@ -63,9 +63,10 @@ export default function Trades({ mint, pairAddress, supply, wallet }) {
           setError('');
         } catch (e) {
           if (cancelled || e?.cancelled) return;
-          if (first) {
+          // keep showing the last trades we had; otherwise explain and retry
+          if (!seenRef.current.size) {
             setRows([]);
-            setError('Trades for this coin are not available yet.');
+            setError('Trades for this coin are not available yet. Retrying shortly.');
           }
         }
       }

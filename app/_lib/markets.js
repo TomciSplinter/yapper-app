@@ -80,19 +80,58 @@ async function gtSlot(isCancelled) {
   }
 }
 
+// Browsers try GeckoTerminal directly first (each viewer has their own rate
+// limit). If the browser blocks that request, we remember it for a day and go
+// through our own cached /api/gt route instead.
+const DIRECT_FLAG = 'yapper:gt-direct-blocked';
+let directState = null; // null = unknown, 'ok', 'blocked'
+
+function directBlocked() {
+  if (directState === null) {
+    try {
+      const t = Number(localStorage.getItem(DIRECT_FLAG));
+      if (t && Date.now() - t < 86400000) directState = 'blocked';
+    } catch {}
+  }
+  return directState === 'blocked';
+}
+
+function blockDirect() {
+  directState = 'blocked';
+  try {
+    localStorage.setItem(DIRECT_FLAG, String(Date.now()));
+  } catch {}
+}
+
 export async function gt(path, isCancelled) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    await gtSlot(isCancelled);
-    let r;
-    try {
-      r = await fetch(GT + path, { headers: { accept: 'application/json' } });
-    } catch (e) {
-      if (attempt === 2) throw e;
-      await sleep(1500);
-      continue;
+    if (isCancelled?.()) throw Object.assign(new Error('cancelled'), { cancelled: true });
+    let r = null;
+
+    if (!directBlocked()) {
+      await gtSlot(isCancelled);
+      try {
+        r = await fetch(GT + path, { headers: { accept: 'application/json' } });
+        directState = 'ok';
+      } catch {
+        // blocked by the browser (CORS) or a network blip
+        if (directState !== 'ok') blockDirect();
+        r = null;
+      }
+      if (r && r.status === 429) r = null; // this viewer is rate limited: try our cache
     }
-    if (r.status === 429) {
-      await sleep(5000);
+
+    if (!r) {
+      try {
+        r = await fetch(`/api/gt?path=${encodeURIComponent(path)}`, { headers: { accept: 'application/json' } });
+      } catch {
+        await sleep(1500);
+        continue;
+      }
+    }
+
+    if (r.status === 429 || r.status === 503) {
+      await sleep(4000);
       continue;
     }
     if (!r.ok) {

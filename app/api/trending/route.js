@@ -2,8 +2,6 @@
 // GeckoTerminal trending pools first; DexScreener's top boosted tokens as a
 // fallback. Cached for 60s so every visitor shares the same few upstream calls.
 
-export const dynamic = 'force-dynamic';
-
 const GT = 'https://api.geckoterminal.com/api/v2/networks/solana';
 const DS = 'https://api.dexscreener.com';
 

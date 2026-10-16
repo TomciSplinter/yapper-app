@@ -291,7 +291,15 @@ export default function App() {
               <div className="ws-left">
                 <div className="ws-chart">
                   {pairReady ? (
-                    <PriceChart key={mint} mint={mint} pairAddress={pair?.pairAddress} supply={supply} symbol={pair?.baseToken?.symbol} />
+                    <PriceChart
+                      key={mint}
+                      mint={mint}
+                      pairAddress={pair?.pairAddress}
+                      supply={supply}
+                      symbol={pair?.baseToken?.symbol}
+                      imageUrl={pair?.info?.imageUrl}
+                      livePrice={pair?.priceUsd}
+                    />
                   ) : (
                     <div className="pc-note">Loading chart…</div>
                   )}

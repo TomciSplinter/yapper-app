@@ -698,24 +698,71 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 42px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--rule);
+  height: 40px;
+  padding: 0 8px;
   overflow-x: auto;
+  scrollbar-width: none;
 }
+.pills {
+  display: inline-flex;
+  gap: 2px;
+}
+.pills > button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pills > button:hover:not(:disabled):not(.on) {
+  color: var(--ink);
+}
+.pills > button.on {
+  background: var(--raise-2);
+  color: var(--ink);
+}
+.pills > button:disabled {
+  opacity: 0.4;
+}
+/* the chart sits on the pane itself: a faint dot grid, no boxes or rules */
 .pc-area {
   position: relative;
   flex: 1;
   min-height: 0;
+  background-image: radial-gradient(circle, rgba(116, 134, 127, 0.17) 1px, transparent 1.3px);
+  background-size: 18px 18px;
+  background-position: 9px 9px;
 }
 .pc-canvas {
   position: absolute;
   inset: 0;
 }
+.pc-avatar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--pane);
+  box-shadow: 0 0 0 1.5px rgba(0, 245, 168, 0.75), 0 6px 16px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  will-change: transform;
+}
+.pc-avatar .timg {
+  border-radius: 50%;
+}
 .pc-legend {
   position: absolute;
   left: 12px;
-  top: 8px;
+  top: 6px;
+  right: 90px;
   z-index: 2;
   display: flex;
   flex-wrap: wrap;
@@ -732,12 +779,21 @@ p {
   color: var(--ink);
   font-weight: 600;
 }
-.pc-embed {
+.pc-live {
+  color: var(--ink-3);
+}
+.pc-credit {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
+  right: 12px;
+  top: 8px;
+  z-index: 2;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  opacity: 0.6;
+}
+.pc-credit:hover {
+  color: var(--ink-2);
+  opacity: 1;
 }
 .pc-note {
   position: absolute;
@@ -1529,8 +1585,8 @@ p {
   .pc-bar {
     padding: 0 8px;
   }
-  .pc-bar .seg > button {
-    padding: 0 7px;
+  .pc-bar .pills > button {
+    padding: 0 8px;
   }
   .tbl th:first-child,
   .tbl td:first-child {
@@ -1565,7 +1621,8 @@ p {
     width: 36px;
     height: 36px;
   }
-  .seg > button {
+  .seg > button,
+  .pills > button {
     height: 34px;
   }
   .presets button {
