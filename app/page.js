@@ -93,6 +93,13 @@ export default function Terminal() {
   const [status, setStatus] = useState(null); // { kind, text, sig }
   const pairTimer = useRef(null);
 
+  // name / ticker search
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const searchSeq = useRef(0);
+
   /* wallet */
   const connect = useCallback(async () => {
     const p = getProvider();
@@ -206,11 +213,52 @@ export default function Terminal() {
     if (m) { setQuery(m); openToken(m); }
   }, [openToken]);
 
+  // search by name/ticker as you type (debounced); a CA or link skips search
+  useEffect(() => {
+    const q = query.trim();
+    if (extractMint(q) || q.replace(/^\$/, '').length < 2) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const j = await r.json();
+        if (seq !== searchSeq.current) return; // a newer search is running
+        setResults(j.results || []);
+        setActiveIdx(0);
+      } catch {
+        if (seq === searchSeq.current) setResults([]);
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const pickResult = (r) => {
+    setShowResults(false);
+    setResults([]);
+    setQuery('');
+    openToken(r.mint);
+  };
+
   const onSearch = (e) => {
     e.preventDefault();
     const m = extractMint(query);
-    if (!m) { setStatus({ kind: 'err', text: 'That doesn’t look like a Solana contract address.' }); return; }
-    openToken(m);
+    if (m) { setShowResults(false); openToken(m); return; }
+    if (results.length) { pickResult(results[activeIdx] || results[0]); return; }
+    if (query.trim().length >= 2) setShowResults(true);
+  };
+
+  const onSearchKey = (e) => {
+    if (!showResults || !results.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, results.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Escape') setShowResults(false);
   };
 
   /* trading */
@@ -293,14 +341,51 @@ export default function Terminal() {
           <label htmlFor="ca" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
             Token contract address
           </label>
-          <input
-            id="ca"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Paste a contract address or pump.fun link"
-            autoComplete="off"
-            spellCheck={false}
-          />
+          <div className="search-box">
+            <input
+              id="ca"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setShowResults(true); }}
+              onFocus={() => setShowResults(true)}
+              onBlur={() => setTimeout(() => setShowResults(false), 150)}
+              onKeyDown={onSearchKey}
+              placeholder="Search a coin by name or ticker, or paste a CA"
+              autoComplete="off"
+              spellCheck={false}
+              role="combobox"
+              aria-expanded={showResults && results.length > 0}
+              aria-controls="search-results"
+            />
+            {showResults && query.trim().length >= 2 && !extractMint(query) && (
+              <ul className="results" id="search-results" role="listbox">
+                {results.map((r, i) => (
+                  <li key={r.mint} role="option" aria-selected={i === activeIdx}>
+                    <button
+                      type="button"
+                      className={`result ${i === activeIdx ? 'on' : ''}`}
+                      onMouseDown={(e) => { e.preventDefault(); pickResult(r); }}
+                      onMouseEnter={() => setActiveIdx(i)}
+                    >
+                      {r.imageUrl ? <img src={r.imageUrl} alt="" /> : <img src="/orb.png" alt="" />}
+                      <span className="r-main">
+                        <span className="r-name">{r.name}</span>
+                        <span className="r-sub mono">${r.symbol} · {short(r.mint)}</span>
+                      </span>
+                      <span className="r-stats mono">
+                        <span>{compact(r.marketCap)}</span>
+                        <span className={r.change24h > 0 ? 'up' : r.change24h < 0 ? 'down' : ''}>
+                          {r.change24h !== null && r.change24h !== undefined ? `${r.change24h > 0 ? '+' : ''}${r.change24h}%` : ''}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {!results.length && (
+                  <li className="r-empty">{searching ? 'Searching…' : 'No Solana coins found.'}</li>
+                )}
+              </ul>
+            )}
+          </div>
           <button className="btn btn-mint" type="submit">Open</button>
         </form>
         {wallet ? (

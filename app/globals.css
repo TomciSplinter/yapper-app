@@ -29,6 +29,16 @@ input { font-family: inherit; }
 .brand img { width: 34px; height: 34px; }
 .brand span { font-family: var(--font-display), sans-serif; font-weight: 800; font-size: 22px; letter-spacing: -0.02em; }
 .search { flex: 1 1 320px; display: flex; gap: 8px; min-width: 0; }
+.search-box { position: relative; flex: 1; min-width: 0; display: flex; }
+.results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 50; list-style: none; margin: 0; padding: 6px; background: #040d0a; border: 1px solid var(--line-strong); border-radius: 16px; box-shadow: 0 16px 48px rgba(0,0,0,.7); max-height: 70vh; overflow-y: auto; }
+.result { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px; border: 0; border-radius: 12px; background: transparent; color: var(--text); text-align: left; min-height: 44px; }
+.result.on { background: var(--panel-2); }
+.result img { width: 36px; height: 36px; border-radius: 10px; object-fit: cover; flex: none; background: var(--panel-2); }
+.r-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.r-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-sub { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-stats { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; flex: none; }
+.r-empty { padding: 12px; color: var(--muted); font-size: 14px; }
 .search input { flex: 1; min-width: 0; height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); font-size: 14px; }
 .search input::placeholder { color: var(--dim); }
 .main { flex: 1; display: flex; flex-wrap: wrap; gap: 16px; padding: 16px 20px 120px; }
