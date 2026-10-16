@@ -32,6 +32,42 @@ function extFor(type) {
 
 let speechUnlocked = false;
 
+// Pick a voice in the reply's language. Without this the browser falls back
+// to the computer's language, so on a Hungarian computer English replies
+// were read by a Hungarian voice. Prefer the natural-sounding voices.
+const voiceCache = new Map();
+let voicesListening = false;
+function pickVoice(lang = 'en') {
+  try {
+    const synth = window.speechSynthesis;
+    const want = String(lang || 'en').toLowerCase().split(/[-_]/)[0];
+    if (voiceCache.has(want)) return voiceCache.get(want);
+    const all = synth.getVoices() || [];
+    if (!all.length && !voicesListening) {
+      voicesListening = true;
+      synth.addEventListener?.('voiceschanged', () => voiceCache.clear());
+    }
+    const voices = all.filter((v) => String(v.lang || '').toLowerCase().split(/[-_]/)[0] === want);
+    if (!voices.length) return null;
+    const score = (v) => {
+      const code = String(v.lang || '').replace('_', '-').toLowerCase();
+      const name = v.name || '';
+      let s = 0;
+      if (code === 'en-us') s += 4;
+      else if (code === 'en-gb') s += 3;
+      if (/natural|neural|online|premium|enhanced/i.test(name)) s += 3;
+      if (/google/i.test(name)) s += 2;
+      if (/^(samantha|aria|jenny|guy|ava|allison)\b/i.test(name)) s += 1;
+      return s;
+    };
+    const best = voices.slice().sort((a, b) => score(b) - score(a))[0];
+    voiceCache.set(want, best);
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 export default function VoiceDock({ getContext, openToken, navigate, wallet, connect, solBal, solPrice, toast, onTraded }) {
   const [phase, setPhaseRaw] = useState('idle'); // idle | starting | listening | thinking | reply | error
   const [tapMode, setTapMode] = useState(false);
@@ -63,16 +99,25 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
     try {
       setMuted(localStorage.getItem(MUTE_KEY) === '1');
     } catch {}
+    if (typeof window !== 'undefined' && window.speechSynthesis) pickVoice('en'); // voices load late in Chrome
+
   }, []);
 
   /* ---------- speech out ---------- */
 
   const speak = useCallback(
-    (text) => {
+    (text, lang = 'en') => {
       try {
         if (muted || !text || !window.speechSynthesis) return;
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
+        const v = pickVoice(lang);
+        if (v) {
+          u.voice = v;
+          u.lang = v.lang;
+        } else {
+          u.lang = lang === 'en' ? 'en-US' : lang;
+        }
         u.rate = 1.05;
         window.speechSynthesis.speak(u);
       } catch {}
@@ -104,11 +149,11 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
   }, [setPhase]);
 
   const say = useCallback(
-    (text) => {
+    (text, lang) => {
       setReply(text || '');
       setPhase('reply');
       setOpen(true);
-      speak(text);
+      speak(text, lang);
       scheduleClose(pendingRef.current ? 0 : 9000);
     },
     [setPhase, speak, scheduleClose]
@@ -252,15 +297,16 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
       switch (cmd.action) {
         case 'confirm':
           if (pendingRef.current) return confirmTrade();
-          return say(cmd.reply || 'There is nothing to confirm.');
+          return say(cmd.reply || 'There is nothing to confirm.', cmd.reply ? cmd.lang : 'en');
         case 'cancel':
           if (pendingRef.current) return cancelTrade();
-          return say(cmd.reply || 'Okay.');
+          return say(cmd.reply || 'Okay.', cmd.reply ? cmd.lang : 'en');
         case 'navigate':
           navigate(cmd.target || 'discover');
           return say(
             cmd.reply ||
-              (cmd.target === 'positions' ? 'Here are your positions.' : cmd.target === 'pulse' ? 'Here is Pulse, with the newest coins.' : 'Here is what is trending.')
+              (cmd.target === 'positions' ? 'Here are your positions.' : cmd.target === 'pulse' ? 'Here is Pulse, with the newest coins.' : 'Here is what is trending.'),
+            cmd.reply ? cmd.lang : 'en'
           );
         case 'open': {
           const coin = await resolveCoin(cmd);
@@ -272,7 +318,7 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
         case 'sell':
           return prepareTrade(cmd);
         default:
-          return say(cmd.reply || 'Try saying: buy 0.1 SOL of this, sell half, or what is the market cap.');
+          return say(cmd.reply || 'Try saying: buy 0.1 SOL of this, sell half, or what is the market cap.', cmd.reply ? cmd.lang : 'en');
       }
     },
     [confirmTrade, cancelTrade, navigate, resolveCoin, openToken, prepareTrade, say, fail]

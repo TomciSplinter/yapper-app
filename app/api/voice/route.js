@@ -24,7 +24,7 @@ function limited(ip) {
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['action', 'coin', 'coin_is_current', 'amount_sol', 'amount_usd', 'percent', 'target', 'reply'],
+  required: ['action', 'coin', 'coin_is_current', 'amount_sol', 'amount_usd', 'percent', 'target', 'reply', 'lang'],
   properties: {
     action: { type: 'string', enum: ['buy', 'sell', 'open', 'ask', 'confirm', 'cancel', 'navigate', 'unknown'] },
     coin: { type: ['string', 'null'], description: 'Coin name, ticker or contract address as the user said it. Null when they mean the coin on screen.' },
@@ -34,6 +34,7 @@ const SCHEMA = {
     percent: { type: ['number', 'null'], description: 'For sells: percent of holdings, 1-100.' },
     target: { type: ['string', 'null'], enum: ['discover', 'pulse', 'positions', null] },
     reply: { type: 'string', description: 'Short reply to show and speak, at most 2 sentences.' },
+    lang: { type: 'string', description: 'Two-letter ISO 639-1 code of the language the reply is written in, e.g. en, hu, es.' },
   },
 };
 
@@ -116,6 +117,7 @@ function clean(cmd) {
     percent: num(cmd?.percent, 0, 100),
     target: ['discover', 'pulse', 'positions'].includes(cmd?.target) ? cmd.target : null,
     reply: String(cmd?.reply || '').slice(0, 400),
+    lang: /^[a-z]{2}$/.test(String(cmd?.lang || '').toLowerCase()) ? String(cmd.lang).toLowerCase() : 'en',
   };
 }
 
