@@ -593,7 +593,7 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
           }
         }}
       >
-        <img src="/orb.png" alt="" width="50" height="50" draggable="false" />
+        <img src="/orb.png" alt="" width="86" height="86" draggable="false" />
       </button>
       <span className="sb-voice-note">
         Hold to talk <kbd>Space</kbd>

@@ -1384,9 +1384,9 @@ p {
 .orb {
   position: relative;
   flex: none;
-  width: 50px;
-  height: 50px;
-  margin-top: -18px;
+  width: 86px;
+  height: 86px;
+  margin-top: -46px;
   border-radius: 50%;
 }
 .orb {
@@ -1407,7 +1407,7 @@ p {
   transition: transform 0.08s linear;
 }
 .orb.listening::before {
-  inset: -16px;
+  inset: -14px;
   opacity: 1;
   transform: scale(calc(1 + var(--lvl) * 0.5));
   background: radial-gradient(closest-side, rgba(0, 245, 168, 0.55), rgba(0, 245, 168, 0));
@@ -1419,9 +1419,9 @@ p {
 .orb::before {
   content: '';
   position: absolute;
-  inset: -6px;
+  inset: -2px;
   border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(0, 245, 168, 0.3), rgba(0, 245, 168, 0));
+  background: radial-gradient(closest-side, rgba(0, 245, 168, 0.4), rgba(0, 245, 168, 0));
   animation: orb-breathe 4.5s ease-in-out infinite;
 }
 .orb:not(.listening):hover img {
@@ -1467,7 +1467,7 @@ p {
 .vp {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--status) + 30px);
+  bottom: calc(var(--status) + 50px);
   z-index: 55;
   display: grid;
   gap: 10px;
@@ -2946,6 +2946,9 @@ p {
     min-height: 100vh;
     grid-template-rows: auto auto var(--status);
   }
+  .main {
+    padding-bottom: 44px; /* room so the orb never covers the last row */
+  }
   .view,
   .tv {
     height: auto;
@@ -3098,6 +3101,11 @@ p {
   }
   .sb-voice-note {
     display: none;
+  }
+  .orb {
+    width: 74px;
+    height: 74px;
+    margin-top: -40px;
   }
   .sb-sol-m {
     display: inline;
