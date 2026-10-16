@@ -6,7 +6,7 @@
 // If a coin has no history yet, the chart builds live candles from now on.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { gt, withPool } from '../_lib/markets';
+import { gt, listPools, rememberPool, knownPool } from '../_lib/markets';
 import { usd, price as fmtPrice, pct } from '../_lib/format';
 import { TokenImage } from './Icons';
 
@@ -197,13 +197,49 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     let cancelled = false;
     let timer;
     const isCancelled = () => cancelled;
-    const fetchBars = () =>
-      withPool(
-        mint,
-        pairAddress,
-        (pool) => gt(`/pools/${pool}/ohlcv/${frame.tf}?aggregate=${frame.agg}&limit=300&currency=usd&token=base`, isCancelled),
-        isCancelled
-      );
+    const ohlcv = async (pool) => {
+      try {
+        const j = await gt(`/pools/${pool}/ohlcv/${frame.tf}?aggregate=${frame.agg}&limit=300&currency=usd&token=base`, isCancelled);
+        return j?.data?.attributes?.ohlcv_list || [];
+      } catch (e) {
+        if (e?.status === 404) return [];
+        throw e;
+      }
+    };
+
+    // Try the pool we know works, then DexScreener's pair, then the coin's
+    // other pools. Some coins trade on a pool with no history (for example one
+    // quoted in another token), while a sibling pool has full candles.
+    const fetchBars = async () => {
+      const known = knownPool(mint);
+      if (known) {
+        const list = await ohlcv(known);
+        if (list.length) return { data: { attributes: { ohlcv_list: list } } };
+      }
+      const tried = new Set(known ? [known] : []);
+      if (pairAddress && !tried.has(pairAddress)) {
+        tried.add(pairAddress);
+        const list = await ohlcv(pairAddress);
+        if (list.length) {
+          rememberPool(mint, pairAddress);
+          return { data: { attributes: { ohlcv_list: list } } };
+        }
+      }
+      let others = [];
+      try {
+        others = (await listPools(mint, isCancelled)).filter((p) => !tried.has(p)).slice(0, 3);
+      } catch (e) {
+        if (e?.cancelled) throw e;
+      }
+      for (const pool of others) {
+        const list = await ohlcv(pool);
+        if (list.length) {
+          rememberPool(mint, pool);
+          return { data: { attributes: { ohlcv_list: list } } };
+        }
+      }
+      return { data: { attributes: { ohlcv_list: [] } } };
+    };
 
     const setAll = (bars) => {
       applyFormat(bars[bars.length - 1].close);
@@ -364,9 +400,6 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
         {state === 'empty' && <div className="pc-note">No trades in this timeframe yet. The chart starts with the next price update.</div>}
         {state === 'error' && <div className="pc-note">Chart data is busy right now. Retrying in 30 seconds.</div>}
 
-        <a className="pc-credit" href="https://www.tradingview.com/" target="_blank" rel="noreferrer" title="Chart by TradingView">
-          TradingView
-        </a>
       </div>
     </div>
   );

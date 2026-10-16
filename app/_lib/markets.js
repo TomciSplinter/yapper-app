@@ -162,6 +162,21 @@ function lookupPool(mint, isCancelled) {
   return lookups.get(mint);
 }
 
+// All pools GeckoTerminal knows for a token, most active first.
+export async function listPools(mint, isCancelled) {
+  const j = await gt(`/tokens/${mint}/pools?page=1`, isCancelled);
+  return (j?.data || []).map((p) => p?.attributes?.address).filter(Boolean);
+}
+
+// Remember the pool that actually has data so trades use the same one.
+export function rememberPool(mint, pool) {
+  goodPool.set(mint, pool);
+}
+
+export function knownPool(mint) {
+  return goodPool.get(mint) || null;
+}
+
 export async function withPool(mint, pairAddress, fn, isCancelled) {
   const known = goodPool.get(mint);
   if (known) return fn(known);

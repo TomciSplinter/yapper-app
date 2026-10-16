@@ -1304,7 +1304,8 @@ p {
   height: 12px;
   background: var(--rule-2);
 }
-.sb-right a:hover {
+.sb-right a:hover,
+.sb-left a:hover {
   color: var(--ink);
 }
 .sb-voice {
@@ -1602,6 +1603,11 @@ p {
   .sb-right,
   .sb-voice-note {
     display: none;
+  }
+  .sb-voice {
+    left: auto;
+    right: 12px;
+    transform: none;
   }
   .toasts {
     right: 12px;

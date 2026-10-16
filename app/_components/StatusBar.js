@@ -32,6 +32,10 @@ export default function StatusBar({ solPrice, onVoice }) {
         <span>
           SOL <b>{solPrice ? `$${solPrice.toFixed(2)}` : '—'}</b>
         </span>
+        <span className="sb-div" aria-hidden="true" />
+        <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" title="Charts by TradingView">
+          <span className="hide-sm">Charts by </span>TradingView
+        </a>
       </div>
 
       <div className="sb-voice">
