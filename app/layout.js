@@ -1,13 +1,13 @@
-import { Poppins, DM_Sans, JetBrains_Mono } from 'next/font/google';
+import { Geist, Geist_Mono, Poppins } from 'next/font/google';
 import './globals.css';
 
-const display = Poppins({ subsets: ['latin'], weight: ['600', '700', '800'], variable: '--font-display' });
-const body = DM_Sans({ subsets: ['latin'], weight: ['400', '500', '700'], variable: '--font-body' });
-const mono = JetBrains_Mono({ subsets: ['latin'], weight: ['400', '500'], variable: '--font-mono' });
+const ui = Geist({ subsets: ['latin'], variable: '--font-ui' });
+const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-mono' });
+const brand = Poppins({ subsets: ['latin'], weight: ['800'], variable: '--font-brand' });
 
 export const metadata = {
-  title: 'Yapper — Terminal',
-  description: 'Voice trading terminal for Solana. Just yap it.',
+  title: 'Yapper Terminal',
+  description: 'Trade Solana coins from one fast terminal. Voice trading is coming soon.',
 };
 
 export const viewport = {
@@ -18,7 +18,7 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
+    <html lang="en" className={`${ui.variable} ${mono.variable} ${brand.variable}`}>
       <body>{children}</body>
     </html>
   );

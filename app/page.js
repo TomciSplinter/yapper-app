@@ -1,117 +1,159 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { VersionedTransaction } from '@solana/web3.js';
-import PriceChart from './PriceChart';
+import { useCallback, useEffect, useState } from 'react';
+import TopBar from './_components/TopBar';
+import TokenHeader from './_components/TokenHeader';
+import PriceChart from './_components/PriceChart';
+import TradePanel from './_components/TradePanel';
+import TokenFacts from './_components/TokenFacts';
+import DataTabs from './_components/DataTabs';
+import Discover from './_components/Discover';
+import Positions from './_components/Positions';
+import StatusBar from './_components/StatusBar';
+import Toasts from './_components/Toasts';
+import { extractMint, getProvider, rpc } from './_lib/chain';
+import { fetchPair, fetchSolPrice } from './_lib/markets';
+import { useHolders, useToasts } from './_lib/hooks';
+import { usd, sol } from './_lib/format';
 
-/* ---------- helpers ---------- */
-
-const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const BUY_PRESETS = [0.1, 0.25, 0.5, 1];
-const SELL_PRESETS = [25, 50, 75, 100];
-
-// Accepts a bare CA or a pump.fun / dexscreener / solscan URL and returns the CA.
-function extractMint(input) {
-  const s = (input || '').trim();
-  if (B58.test(s)) return s;
-  const parts = s.split(/[/?#&=]/).filter(Boolean);
-  for (let i = parts.length - 1; i >= 0; i--) if (B58.test(parts[i])) return parts[i];
-  return null;
+function readUrl() {
+  const q = new URLSearchParams(window.location.search);
+  const m = extractMint(q.get('ca'));
+  if (m) return { view: 'token', mint: m };
+  if (q.get('view') === 'positions') return { view: 'positions', mint: null };
+  return { view: 'discover', mint: null };
 }
 
-async function rpc(method, params) {
-  const r = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message || 'RPC error');
-  return j.result;
-}
-
-function b64ToBytes(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function bytesToB64(bytes) {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
-
-function getProvider() {
-  if (typeof window === 'undefined') return null;
-  if (window.phantom?.solana?.isPhantom) return window.phantom.solana;
-  if (window.solana?.isPhantom) return window.solana;
-  if (window.solflare?.isSolflare) return window.solflare;
-  if (window.backpack?.solana) return window.backpack.solana;
-  return null;
-}
-
-function compact(n, prefix = '$') {
-  if (n === null || n === undefined || isNaN(n)) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return `${prefix}${(n / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${prefix}${(n / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${prefix}${(n / 1e3).toFixed(1)}K`;
-  return `${prefix}${n.toFixed(2)}`;
-}
-
-function price(n) {
-  if (!n) return '—';
-  const v = Number(n);
-  if (v >= 1) return `$${v.toFixed(4)}`;
-  // show small prices like $0.0000123 without scientific notation
-  return `$${v.toPrecision(3)}`.replace(/e-(\d+)/, (_, e) => `e-${e}`);
-}
-
-function short(a) {
-  return a ? `${a.slice(0, 4)}…${a.slice(-4)}` : '';
-}
-
-/* ---------- page ---------- */
-
-export default function Terminal() {
-  const [wallet, setWallet] = useState(null); // base58 pubkey
-  const [solBal, setSolBal] = useState(null);
-  const [query, setQuery] = useState('');
+export default function App() {
+  const [booted, setBooted] = useState(false);
+  const [view, setView] = useState('discover'); // discover | positions | token
   const [mint, setMint] = useState(null);
-  const [pair, setPair] = useState(null); // DexScreener pair
-  const [pairState, setPairState] = useState('idle'); // idle | loading | found | none
-  const [tokenBal, setTokenBal] = useState(null);
-
   const [side, setSide] = useState('buy');
-  const [buyAmt, setBuyAmt] = useState('0.1');
-  const [sellPct, setSellPct] = useState(50);
-  const [slippage, setSlippage] = useState('10');
-  const [prioFee, setPrioFee] = useState('0.0005');
 
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState(null); // { kind, text, sig }
-  const pairTimer = useRef(null);
+  const [pair, setPair] = useState(null);
+  const [pairState, setPairState] = useState('idle'); // idle | loading | found | none
 
-  // name / ticker search
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const searchSeq = useRef(0);
+  const [wallet, setWallet] = useState(null);
+  const [solBal, setSolBal] = useState(null);
+  const [tokenBal, setTokenBal] = useState(null);
+  const [balTick, setBalTick] = useState(0);
+  const [solPrice, setSolPrice] = useState(null);
+
+  const [toasts, toast] = useToasts();
+
+  /* routing: ?ca=<mint> opens a coin, ?view=positions opens positions */
+  useEffect(() => {
+    const s = readUrl();
+    setView(s.view);
+    setMint(s.mint);
+    setBooted(true);
+    const onPop = () => {
+      const p = readUrl();
+      setView(p.view);
+      setMint(p.mint);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const go = useCallback((nextView, nextMint = null) => {
+    const url = nextView === 'token' && nextMint ? `/?ca=${nextMint}` : nextView === 'positions' ? '/?view=positions' : '/';
+    if (window.location.pathname + window.location.search !== url) window.history.pushState(null, '', url);
+    setView(nextView);
+    setMint(nextView === 'token' ? nextMint : null);
+    window.scrollTo(0, 0);
+  }, []);
+
+  const openToken = useCallback(
+    (m, nextSide) => {
+      setSide(nextSide === 'sell' ? 'sell' : 'buy');
+      go('token', m);
+    },
+    [go]
+  );
+
+  /* coin stats from DexScreener, refreshed every 10s */
+  useEffect(() => {
+    if (view !== 'token' || !mint) {
+      setPair(null);
+      setPairState('idle');
+      return;
+    }
+    let cancelled = false;
+    let timer;
+    setPair(null);
+    setPairState('loading');
+    async function load(first) {
+      if (first || !document.hidden) {
+        try {
+          const p = await fetchPair(mint);
+          if (cancelled) return;
+          setPair(p);
+          setPairState(p ? 'found' : 'none');
+        } catch {
+          if (!cancelled && first) setPairState('none');
+        }
+      }
+      if (!cancelled) timer = setTimeout(() => load(false), 10000);
+    }
+    load(true);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [view, mint]);
+
+  const pairReady = pairState === 'found' || pairState === 'none';
+  const supply = pair?.marketCap && Number(pair?.priceUsd) > 0 ? pair.marketCap / Number(pair.priceUsd) : 0;
+  const holders = useHolders(view === 'token' ? mint : null, pair?.pairAddress, pairReady);
+
+  // tab title shows the coin and its market cap, like other terminals
+  useEffect(() => {
+    if (view === 'token' && pair?.baseToken?.symbol) {
+      document.title = `${pair.baseToken.symbol} ${usd(pair.marketCap ?? pair.fdv)} | Yapper`;
+    } else if (view === 'positions') {
+      document.title = 'Positions | Yapper';
+    } else {
+      document.title = 'Yapper Terminal';
+    }
+  }, [view, pair]);
+
+  /* SOL price for quotes and the status bar */
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const p = await fetchSolPrice();
+        if (!cancelled && p) setSolPrice(p);
+      } catch {}
+    };
+    load();
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   /* wallet */
   const connect = useCallback(async () => {
     const p = getProvider();
     if (!p) {
-      // On mobile with no injected wallet, reopen this page inside Phantom's browser.
+      // on a phone without an injected wallet, reopen this page inside Phantom
       if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
         const url = encodeURIComponent(window.location.href);
         window.location.href = `https://phantom.app/ul/browse/${url}?ref=${encodeURIComponent(window.location.origin)}`;
         return;
       }
-      window.open('https://phantom.app/download', '_blank');
+      toast.show({
+        kind: 'info',
+        title: 'No Solana wallet found',
+        detail: 'Install Phantom, Solflare or Backpack, then reload this page.',
+        autoClose: 8000,
+      });
+      window.open('https://phantom.app/download', '_blank', 'noopener');
       return;
     }
     try {
@@ -119,23 +161,26 @@ export default function Terminal() {
       const pk = p.publicKey?.toString();
       if (pk) setWallet(pk);
     } catch (e) {
-      setStatus({ kind: 'err', text: e?.message || 'Wallet connection was rejected' });
+      toast.show({ kind: 'error', title: 'Wallet not connected', detail: e?.message || 'The request was rejected.', autoClose: 6000 });
     }
-  }, []);
+  }, [toast]);
 
   const disconnect = useCallback(async () => {
-    try { await getProvider()?.disconnect(); } catch {}
+    try {
+      await getProvider()?.disconnect();
+    } catch {}
     setWallet(null);
-    setSolBal(null);
-    setTokenBal(null);
   }, []);
 
-  // reconnect silently if the user approved this site before
+  // reconnect silently if this site was approved before
   useEffect(() => {
     const p = getProvider();
     if (!p?.connect) return;
     p.connect({ onlyIfTrusted: true })
-      .then(() => { const pk = p.publicKey?.toString(); if (pk) setWallet(pk); })
+      .then(() => {
+        const pk = p.publicKey?.toString();
+        if (pk) setWallet(pk);
+      })
       .catch(() => {});
     const onChange = (pk) => setWallet(pk ? pk.toString() : null);
     p.on?.('accountChanged', onChange);
@@ -143,396 +188,149 @@ export default function Terminal() {
   }, []);
 
   /* balances */
-  const refreshBalances = useCallback(async () => {
-    if (!wallet) return;
-    try {
-      const b = await rpc('getBalance', [wallet, { commitment: 'confirmed' }]);
-      setSolBal(b.value / 1e9);
-    } catch {}
-    if (mint) {
-      try {
-        const r = await rpc('getParsedTokenAccountsByOwner', [wallet, { mint }, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
-        const total = (r.value || []).reduce(
-          (s, a) => s + (Number(a.account.data.parsed.info.tokenAmount.uiAmount) || 0),
-          0
-        );
-        setTokenBal(total);
-      } catch {
-        setTokenBal(null);
-      }
+  useEffect(() => {
+    if (!wallet) {
+      setSolBal(null);
+      return;
     }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const b = await rpc('getBalance', [wallet, { commitment: 'confirmed' }]);
+        if (!cancelled) setSolBal(b.value / 1e9);
+      } catch {}
+    };
+    load();
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [wallet, balTick]);
+
+  useEffect(() => {
+    setTokenBal(null);
   }, [wallet, mint]);
 
   useEffect(() => {
-    refreshBalances();
-    if (!wallet) return;
-    const t = setInterval(refreshBalances, 15000);
-    return () => clearInterval(t);
-  }, [refreshBalances, wallet]);
+    if (!wallet || !mint || view !== 'token') return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await rpc('getParsedTokenAccountsByOwner', [wallet, { mint }, { encoding: 'jsonParsed', commitment: 'confirmed' }]);
+        const total = (r?.value || []).reduce((s, a) => {
+          const t = a?.account?.data?.parsed?.info?.tokenAmount;
+          return s + (Number(t?.uiAmountString ?? t?.uiAmount) || 0);
+        }, 0);
+        if (!cancelled) setTokenBal(total);
+      } catch {}
+    };
+    load();
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [wallet, mint, view, balTick]);
 
-  /* token data from DexScreener */
-  const loadPair = useCallback(async (m, quiet) => {
-    if (!quiet) setPairState('loading');
-    try {
-      const r = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${m}`);
-      const arr = await r.json();
-      if (!Array.isArray(arr) || arr.length === 0) {
-        if (!quiet) { setPair(null); setPairState('none'); }
-        return;
-      }
-      const best = [...arr].sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
-      setPair(best);
-      setPairState('found');
-    } catch {
-      if (!quiet) { setPair(null); setPairState('none'); }
-    }
+  const onTraded = useCallback(() => {
+    setBalTick((n) => n + 1);
+    setTimeout(() => setBalTick((n) => n + 1), 5000);
   }, []);
 
-  const openToken = useCallback((m) => {
-    setMint(m);
-    setPair(null);
-    setTokenBal(null);
-    setStatus(null);
-    loadPair(m);
-    const u = new URL(window.location.href);
-    u.searchParams.set('ca', m);
-    window.history.replaceState(null, '', u.toString());
-  }, [loadPair]);
-
-  // live refresh of price stats
-  useEffect(() => {
-    clearInterval(pairTimer.current);
-    if (!mint) return;
-    pairTimer.current = setInterval(() => loadPair(mint, true), 10000);
-    return () => clearInterval(pairTimer.current);
-  }, [mint, loadPair]);
-
-  // open ?ca= from the URL on first load
-  useEffect(() => {
-    const ca = new URLSearchParams(window.location.search).get('ca');
-    const m = extractMint(ca);
-    if (m) { setQuery(m); openToken(m); }
-  }, [openToken]);
-
-  // search by name/ticker as you type (debounced); a CA or link skips search
-  useEffect(() => {
-    const q = query.trim();
-    if (extractMint(q) || q.replace(/^\$/, '').length < 2) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const t = setTimeout(async () => {
-      try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-        const j = await r.json();
-        if (seq !== searchSeq.current) return; // a newer search is running
-        setResults(j.results || []);
-        setActiveIdx(0);
-      } catch {
-        if (seq === searchSeq.current) setResults([]);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  const pickResult = (r) => {
-    setShowResults(false);
-    setResults([]);
-    setQuery('');
-    openToken(r.mint);
-  };
-
-  const onSearch = (e) => {
-    e.preventDefault();
-    const m = extractMint(query);
-    if (m) { setShowResults(false); openToken(m); return; }
-    if (results.length) { pickResult(results[activeIdx] || results[0]); return; }
-    if (query.trim().length >= 2) setShowResults(true);
-  };
-
-  const onSearchKey = (e) => {
-    if (!showResults || !results.length) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, results.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
-    else if (e.key === 'Escape') setShowResults(false);
-  };
-
-  /* trading */
-  const trade = async () => {
-    if (!wallet) return connect();
-    if (!mint) return;
-    const p = getProvider();
-    if (!p) return connect();
-
-    const isBuy = side === 'buy';
-    const amount = isBuy ? Number(buyAmt) : sellPct;
-    if (isBuy && !(amount > 0)) { setStatus({ kind: 'err', text: 'Enter a SOL amount.' }); return; }
-    if (isBuy && solBal !== null && amount > solBal) { setStatus({ kind: 'err', text: 'Not enough SOL in your wallet.' }); return; }
-    if (!isBuy && !(tokenBal > 0)) { setStatus({ kind: 'err', text: 'You don’t hold this token.' }); return; }
-
-    setBusy(true);
-    setStatus({ kind: 'info', text: 'Building transaction…' });
-    try {
-      const r = await fetch('/api/trade', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          publicKey: wallet,
-          mint,
-          action: side,
-          amount: isBuy ? amount : `${amount}%`,
-          slippage: Number(slippage),
-          priorityFee: Number(prioFee),
-        }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.tx) throw new Error(j.error || 'Could not build the transaction');
-
-      const tx = VersionedTransaction.deserialize(b64ToBytes(j.tx));
-      setStatus({ kind: 'info', text: 'Approve it in your wallet…' });
-      const signed = await p.signTransaction(tx);
-
-      setStatus({ kind: 'info', text: 'Sending…' });
-      const sig = await rpc('sendTransaction', [
-        bytesToB64(signed.serialize()),
-        { encoding: 'base64', skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 },
-      ]);
-
-      setStatus({ kind: 'info', text: 'Confirming…', sig });
-      const ok = await waitForConfirm(sig);
-      if (ok === true) {
-        setStatus({ kind: 'ok', text: isBuy ? `Bought with ${amount} SOL.` : `Sold ${amount}%.`, sig });
-      } else if (ok === false) {
-        setStatus({ kind: 'err', text: 'Transaction failed on-chain (often slippage). Try again or raise slippage.', sig });
-      } else {
-        setStatus({ kind: 'info', text: 'Sent, still confirming. Check the explorer link.', sig });
-      }
-      refreshBalances();
-      setTimeout(refreshBalances, 4000);
-    } catch (e) {
-      const msg = e?.message || String(e);
-      setStatus({ kind: 'err', text: /reject|denied|cancel/i.test(msg) ? 'You cancelled the transaction.' : msg });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /* render */
-  const name = pair?.baseToken?.name;
-  const sym = pair?.baseToken?.symbol;
-  const ch24 = pair?.priceChange?.h24;
-  const ch1 = pair?.priceChange?.h1;
-  const supply = pair?.marketCap && Number(pair?.priceUsd) > 0 ? pair.marketCap / Number(pair.priceUsd) : 0;
+  const onVoice = useCallback(() => {
+    toast.show({
+      kind: 'info',
+      title: 'Voice trading is coming soon',
+      detail: 'You will hold the orb and say trades like “buy half a SOL of this”.',
+      autoClose: 6000,
+    });
+  }, [toast]);
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <a className="brand" href="https://yapper.trade">
-          <img src="/orb.png" alt="" />
-          <span>Yapper</span>
-        </a>
-        <form className="search" onSubmit={onSearch} role="search">
-          <label htmlFor="ca" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
-            Token contract address
-          </label>
-          <div className="search-box">
-            <input
-              id="ca"
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setShowResults(true); }}
-              onFocus={() => setShowResults(true)}
-              onBlur={() => setTimeout(() => setShowResults(false), 150)}
-              onKeyDown={onSearchKey}
-              placeholder="Search a coin by name or ticker, or paste a CA"
-              autoComplete="off"
-              spellCheck={false}
-              role="combobox"
-              aria-expanded={showResults && results.length > 0}
-              aria-controls="search-results"
-            />
-            {showResults && query.trim().length >= 2 && !extractMint(query) && (
-              <ul className="results" id="search-results" role="listbox">
-                {results.map((r, i) => (
-                  <li key={r.mint} role="option" aria-selected={i === activeIdx}>
-                    <button
-                      type="button"
-                      className={`result ${i === activeIdx ? 'on' : ''}`}
-                      onMouseDown={(e) => { e.preventDefault(); pickResult(r); }}
-                      onMouseEnter={() => setActiveIdx(i)}
-                    >
-                      {r.imageUrl ? <img src={r.imageUrl} alt="" /> : <img src="/orb.png" alt="" />}
-                      <span className="r-main">
-                        <span className="r-name">{r.name}</span>
-                        <span className="r-sub mono">${r.symbol} · {short(r.mint)}</span>
-                      </span>
-                      <span className="r-stats mono">
-                        <span>{compact(r.marketCap)}</span>
-                        <span className={r.change24h > 0 ? 'up' : r.change24h < 0 ? 'down' : ''}>
-                          {r.change24h !== null && r.change24h !== undefined ? `${r.change24h > 0 ? '+' : ''}${r.change24h}%` : ''}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-                {!results.length && (
-                  <li className="r-empty">{searching ? 'Searching…' : 'No Solana coins found.'}</li>
-                )}
-              </ul>
-            )}
-          </div>
-          <button className="btn btn-mint" type="submit">Open</button>
-        </form>
-        {wallet ? (
-          <button className="btn mono" onClick={disconnect} title="Disconnect">
-            {solBal !== null ? `${solBal.toFixed(3)} SOL · ` : ''}{short(wallet)}
-          </button>
-        ) : (
-          <button className="btn btn-mint" onClick={connect}>Connect wallet</button>
-        )}
-      </header>
+    <div className="app">
+      <TopBar
+        view={view}
+        onNavigate={(v) => go(v)}
+        onOpenToken={openToken}
+        wallet={wallet}
+        solBal={solBal}
+        onConnect={connect}
+        onDisconnect={disconnect}
+      />
 
       <main className="main">
-        <section className="chart-col" aria-label="Chart">
-          <div className="chart-frame">
-            {mint ? (
-              <PriceChart mint={mint} pairAddress={pair?.pairAddress} supply={supply} symbol={sym} />
-            ) : (
-              <div className="empty">
-                <img src="/orb.png" alt="" />
-                <span>Search a coin or paste a contract address to load a chart.</span>
-              </div>
-            )}
-          </div>
-          {status && (
-            <div className={`status ${status.kind === 'ok' ? 'ok' : status.kind === 'err' ? 'err' : ''}`} role="status">
-              {status.text}
-              {status.sig && (
-                <>
-                  {' '}
-                  <a href={`https://solscan.io/tx/${status.sig}`} target="_blank" rel="noreferrer">View on Solscan</a>
-                </>
-              )}
-            </div>
-          )}
-        </section>
+        {booted && view === 'discover' && <Discover onOpenToken={openToken} />}
 
-        <aside className="side-col">
-          <div className="panel">
-            <h2>Token</h2>
-            {mint ? (
-              <>
-                <div className="token-head">
-                  {pair?.info?.imageUrl ? <img src={pair.info.imageUrl} alt="" /> : <img src="/orb.png" alt="" />}
-                  <div>
-                    <div className="token-name">{name || 'Unknown token'}</div>
-                    <div className="token-sym">{sym ? `$${sym}` : short(mint)}{pair?.dexId ? ` · ${pair.dexId}` : ''}</div>
-                  </div>
-                </div>
-                <div className="stats">
-                  <div className="stat"><div className="k">Price</div><div className="v">{price(pair?.priceUsd)}</div></div>
-                  <div className="stat"><div className="k">Market cap</div><div className="v">{compact(pair?.marketCap ?? pair?.fdv)}</div></div>
-                  <div className="stat"><div className="k">Liquidity</div><div className="v">{compact(pair?.liquidity?.usd)}</div></div>
-                  <div className="stat"><div className="k">Vol 24h</div><div className="v">{compact(pair?.volume?.h24)}</div></div>
-                  <div className="stat">
-                    <div className="k">1h</div>
-                    <div className={`v ${ch1 > 0 ? 'up' : ch1 < 0 ? 'down' : ''}`}>{ch1 !== undefined && ch1 !== null ? `${ch1 > 0 ? '+' : ''}${ch1}%` : '—'}</div>
-                  </div>
-                  <div className="stat">
-                    <div className="k">24h</div>
-                    <div className={`v ${ch24 > 0 ? 'up' : ch24 < 0 ? 'down' : ''}`}>{ch24 !== undefined && ch24 !== null ? `${ch24 > 0 ? '+' : ''}${ch24}%` : '—'}</div>
-                  </div>
-                </div>
-                <div className="ca mono">CA {mint}</div>
-              </>
-            ) : (
-              <div style={{ color: 'var(--muted)' }}>No token open.</div>
-            )}
-          </div>
-
-          <div className="panel">
-            <h2>Trade</h2>
-            <div className="tabs" role="tablist">
-              <button role="tab" aria-selected={side === 'buy'} className={`tab ${side === 'buy' ? 'on' : ''}`} onClick={() => setSide('buy')}>Buy</button>
-              <button role="tab" aria-selected={side === 'sell'} className={`tab sell ${side === 'sell' ? 'on' : ''}`} onClick={() => setSide('sell')}>Sell</button>
-            </div>
-
-            {side === 'buy' ? (
-              <>
-                <div className="presets">
-                  {BUY_PRESETS.map((v) => (
-                    <button key={v} className={`preset ${Number(buyAmt) === v ? 'on' : ''}`} onClick={() => setBuyAmt(String(v))}>{v}</button>
-                  ))}
-                </div>
-                <label className="field">
-                  <input inputMode="decimal" value={buyAmt} onChange={(e) => setBuyAmt(e.target.value.replace(',', '.'))} aria-label="Amount in SOL" />
-                  <span>SOL</span>
-                </label>
-              </>
-            ) : (
-              <div className="presets">
-                {SELL_PRESETS.map((v) => (
-                  <button key={v} className={`preset ${sellPct === v ? 'on' : ''}`} onClick={() => setSellPct(v)}>{v}%</button>
-                ))}
-              </div>
-            )}
-
-            <div className="row">
+        {booted && view === 'positions' && (
+          <section className="view" aria-labelledby="pv-title">
+            <header className="view-head">
               <div>
-                <span className="label">Slippage %</span>
-                <label className="field"><input inputMode="decimal" value={slippage} onChange={(e) => setSlippage(e.target.value)} aria-label="Slippage percent" /></label>
+                <h1 className="view-title" id="pv-title">
+                  Your positions
+                </h1>
+                <p className="view-sub">
+                  {wallet ? `${solBal === null ? '—' : sol(solBal)} SOL available` : 'Coins you hold, with live value'}
+                </p>
               </div>
-              <div>
-                <span className="label">Priority fee</span>
-                <label className="field"><input inputMode="decimal" value={prioFee} onChange={(e) => setPrioFee(e.target.value)} aria-label="Priority fee in SOL" /><span>SOL</span></label>
-              </div>
+            </header>
+            <div className="view-body">
+              <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} />
             </div>
+          </section>
+        )}
 
-            <button
-              className={`btn go ${side === 'buy' ? 'btn-mint' : 'btn-sell'}`}
-              onClick={trade}
-              disabled={busy || (wallet && !mint)}
-            >
-              {busy ? 'Working…' : !wallet ? 'Connect wallet' : side === 'buy' ? `Buy ${buyAmt || 0} SOL` : `Sell ${sellPct}%`}
-            </button>
-
-            {wallet && mint && (
-              <div className="hold">
-                <span>You hold</span>
-                <span className="mono">{tokenBal === null ? '…' : tokenBal.toLocaleString(undefined, { maximumFractionDigits: 2 })} {sym || ''}</span>
+        {booted && view === 'token' && mint && (
+          <div className="tv">
+            <TokenHeader mint={mint} pair={pair} pairState={pairState} />
+            <div className="ws">
+              <div className="ws-left">
+                <div className="ws-chart">
+                  {pairReady ? (
+                    <PriceChart key={mint} mint={mint} pairAddress={pair?.pairAddress} supply={supply} symbol={pair?.baseToken?.symbol} />
+                  ) : (
+                    <div className="pc-note">Loading chart…</div>
+                  )}
+                </div>
+                <DataTabs
+                  mint={mint}
+                  pair={pair}
+                  pairReady={pairReady}
+                  supply={supply}
+                  wallet={wallet}
+                  holders={holders}
+                  positionsKey={balTick}
+                  onOpenToken={openToken}
+                  onConnect={connect}
+                />
               </div>
-            )}
+              <aside className="ws-right" aria-label="Trade and coin info">
+                <TradePanel
+                  mint={mint}
+                  pair={pair}
+                  side={side}
+                  onSideChange={setSide}
+                  wallet={wallet}
+                  solBal={solBal}
+                  tokenBal={tokenBal}
+                  solPrice={solPrice}
+                  onConnect={connect}
+                  onTraded={onTraded}
+                  toast={toast}
+                />
+                <TokenFacts pair={pair} holders={holders} />
+              </aside>
+            </div>
           </div>
-        </aside>
+        )}
       </main>
 
-      <div className="orb-dock">
-        <button className="orb-btn" aria-label="Voice trading (coming soon)" title="Voice trading coming soon" disabled>
-          <img src="/orb.png" alt="" />
-        </button>
-        <small>voice coming soon</small>
-      </div>
+      <StatusBar solPrice={solPrice} onVoice={onVoice} />
+      <Toasts items={toasts} onDismiss={toast.dismiss} />
     </div>
   );
-}
-
-// Polls the signature until confirmed. Returns true (success), false (failed) or null (timed out).
-async function waitForConfirm(sig, timeoutMs = 60000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const r = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: false }]);
-      const s = r?.value?.[0];
-      if (s) {
-        if (s.err) return false;
-        if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') return true;
-      }
-    } catch {}
-    await new Promise((res) => setTimeout(res, 1500));
-  }
-  return null;
 }

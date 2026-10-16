@@ -1,28 +1,45 @@
-# Yapper — terminal
+# Yapper terminal
 
-Voice trading terminal for Solana. This is step 1: the bare terminal (wallet connect, token by CA, live chart, buy/sell). The voice layer comes next.
+Solana trading terminal at app.yapper.trade. Voice trading is next.
 
-## How it works
+## What's in it
 
-- **Wallet**: Phantom / Solflare / Backpack, connected in the browser. Users sign every trade themselves; no private keys ever reach the server.
-- **Chart + stats**: DexScreener (chart embed + `tokens/v1` API).
-- **Trades**: PumpPortal Local Transaction API with `pool: "auto"`, which covers bonding-curve coins and migrated ones. Built server-side in `/api/trade`, signed in the wallet, sent through `/api/rpc`.
-- **RPC**: Helius, proxied through `/api/rpc` so the key stays on the server. Only a short list of RPC methods is allowed.
+- **Discover** (home): trending Solana coins, sortable by trending, volume, market cap, 1h gainers or newest.
+- **Coin view**: header stats, candlestick chart (market cap or price, 1m to 1D), live trades, top holders with pools and program accounts labelled, your positions, a buy/sell panel and coin info (buy/sell pressure, top 10 holders, volume, supply).
+- **Positions**: every coin in the connected wallet with live value.
+- Search by name, ticker or contract address (press `/` anywhere).
+- Toast notifications for each trade step, and a status bar with connection, SOL price and the voice orb.
+
+## Where the data comes from
+
+| Data | Source | Called from |
+| --- | --- | --- |
+| Coin stats, positions pricing, SOL price | DexScreener | browser |
+| Candles and trades | GeckoTerminal (free tier, rate-limited per viewer) | browser |
+| Trending | GeckoTerminal trending pools, DexScreener boosts as fallback | `/api/trending` (cached 60s) |
+| Search | DexScreener | `/api/search` |
+| Balances, holders, sending transactions | Helius RPC | `/api/rpc` (key stays on the server, method allowlist) |
+| Trade transactions | PumpPortal Local Transaction API (`pool: auto`) | `/api/trade` |
+
+Users sign every trade in their own wallet (Phantom, Solflare, Backpack). No private keys touch the server.
+
+## Code layout
+
+- `app/page.js`: routing (`?ca=<mint>`, `?view=positions`), wallet, balances, coin data
+- `app/_components/`: UI pieces (TopBar, TokenHeader, PriceChart, TradePanel, TokenFacts, DataTabs, Trades, Holders, Positions, Discover, StatusBar, Toasts)
+- `app/_lib/`: formatting, Solana helpers, market data clients, hooks
+- `app/globals.css`: design tokens and all styles
 
 ## Environment variables (Vercel → Project → Settings → Environment Variables)
 
 | Name | Needed for |
 | --- | --- |
-| `HELIUS_API_KEY` | balances, sending transactions |
+| `HELIUS_API_KEY` | balances, holders, sending transactions |
 | `OPENAI_API_KEY` | voice layer (next step) |
 
 ## Deploy
 
-1. Vercel → Add New → Project → import this GitHub repo. Framework: Next.js (auto-detected).
-2. Add the environment variables above, then Deploy.
-3. Settings → Domains → add `app.yapper.trade`, and add the DNS record Vercel shows at your registrar.
-
-Every push to `main` redeploys automatically.
+Every push to `main` redeploys on Vercel automatically.
 
 ## Local dev
 

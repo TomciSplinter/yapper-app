@@ -10,6 +10,9 @@ const ALLOWED = new Set([
   'getParsedTokenAccountsByOwner',
   'getTokenAccountBalance',
   'getAccountInfo',
+  'getMultipleAccounts',
+  'getTokenLargestAccounts',
+  'getTokenSupply',
   'sendTransaction',
   'simulateTransaction',
 ]);
