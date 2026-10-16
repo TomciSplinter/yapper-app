@@ -213,7 +213,7 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
           <WalletMenu wallet={wallet} solBal={solBal} onDisconnect={onDisconnect} />
         ) : (
           <button type="button" className="btn btn-primary" onClick={onConnect}>
-            Connect wallet
+            Wallets
           </button>
         )}
       </div>
