@@ -32,7 +32,7 @@ const SCHEMA = {
     amount_sol: { type: ['number', 'null'] },
     amount_usd: { type: ['number', 'null'] },
     percent: { type: ['number', 'null'], description: 'For sells: percent of holdings, 1-100.' },
-    target: { type: ['string', 'null'], enum: ['discover', 'positions', null] },
+    target: { type: ['string', 'null'], enum: ['discover', 'pulse', 'positions', null] },
     reply: { type: 'string', description: 'Short reply to show and speak, at most 2 sentences.' },
   },
 };
@@ -47,7 +47,7 @@ Actions:
 - ask: a question about the market, a coin, their position or balance. Answer in reply using ONLY numbers from the context. If the data is not there, say you don't have it. Do not invent numbers. No financial advice or predictions; you may describe what the data shows.
 - confirm: user approves a pending trade (yes, confirm, do it, send it, go). Only when context.pending_trade is not null.
 - cancel: user rejects a pending trade or says stop/never mind.
-- navigate: go to "discover" (trending/home) or "positions" (portfolio/my coins/bags). Set target.
+- navigate: go to "discover" (trending/home), "pulse" (new pairs, new coins, final stretch, about to graduate, migrated, pulse) or "positions" (portfolio/my coins/bags). Set target.
 - unknown: anything else; reply with a short example of what they can say.
 
 Coins: if the user says this/it/the coin, or names the coin that is on screen, set coin_is_current true and coin null. Otherwise put the coin as they said it in coin (fix obvious speech-to-text spelling of tickers, e.g. "bonk" -> "BONK", "wiff" -> "WIF").
@@ -114,7 +114,7 @@ function clean(cmd) {
     amount_sol: num(cmd?.amount_sol, 0, 1000),
     amount_usd: num(cmd?.amount_usd, 0, 1e7),
     percent: num(cmd?.percent, 0, 100),
-    target: cmd?.target === 'discover' || cmd?.target === 'positions' ? cmd.target : null,
+    target: ['discover', 'pulse', 'positions'].includes(cmd?.target) ? cmd.target : null,
     reply: String(cmd?.reply || '').slice(0, 400),
   };
 }

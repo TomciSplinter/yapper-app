@@ -4,7 +4,11 @@ Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or
 
 ## What's in it
 
-- **Discover** (home): trending Solana coins, sortable by trending, volume, market cap, 1h gainers or newest.
+- **Discover** (home): a coin table with mini charts, market cap and change, liquidity, volume, buys and sells, holder stats and a quick buy button per row.
+  - **Trending**: pump.fun coins still on the bonding curve with trading right now, $5K to $40K market cap by default (adjustable), timeframes 5m, 1h, 6h, 24h.
+  - **Top**: the most active pools on all of Solana.
+- **Pulse**: pump.fun coins in three live columns, New pairs (under 70% of the bonding curve), Final stretch (70% or more) and Migrated (graduated to PumpSwap). New coins and migrations stream in as they happen and coins move between columns as they progress. A list holds still while your pointer is over it (or while you touch it), so a Buy click always hits the coin you see.
+- **Quick buy**: one amount, set in Discover or Pulse, that every Buy button in the lists spends right away.
 - **Coin view**: header stats, candlestick chart (market cap or price, 1m to 1D), live trades, top holders with pools and program accounts labelled, your positions, a buy/sell panel and coin info (buy/sell pressure, top 10 holders, volume, supply).
 - **Positions**: every coin in the connected wallet with live value.
 - **Wallets**: create or import Yapper wallets that trade instantly with no popups, or connect Phantom, Solflare or Backpack. Switch, rename, deposit, withdraw, export and remove from the wallet menu.
@@ -17,7 +21,10 @@ Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or
 | --- | --- | --- |
 | Coin stats, positions pricing, SOL price | DexScreener | browser |
 | Candles and trades | GeckoTerminal (free tier, rate-limited per viewer) | browser |
-| Trending | GeckoTerminal trending pools, DexScreener boosts as fallback | `/api/trending` (cached 60s) |
+| Discover and Pulse lists | GeckoTerminal (pump.fun and PumpSwap pools, trending pools, new pools) | `/api/pump` (cached, shared by every visitor) |
+| Live numbers on the lists | DexScreener, 30 coins per call, every 10 to 12s | browser |
+| New coins and migrations | PumpPortal websocket (its free streams) | browser |
+| Holders, top 10 and dev share (optional) | Jupiter token API | `/api/tokeninfo` (cached 60s) |
 | Search | DexScreener | `/api/search` |
 | Balances, holders, simulating and sending transactions | Helius RPC | `/api/rpc` (key stays on the server, method allowlist) |
 | Trade transactions | PumpPortal Local Transaction API (`pool: auto`) | `/api/trade` |
@@ -48,9 +55,9 @@ The site sends `frame-ancestors 'none'` so no other page can embed the terminal 
 
 ## Code layout
 
-- `app/page.js`: routing (`?ca=<mint>`, `?view=positions`), active wallet, balances, coin data
-- `app/_components/`: UI pieces (TopBar, TokenHeader, PriceChart, TradePanel, TokenFacts, DataTabs, Trades, Holders, Positions, Discover, StatusBar, Toasts, VoiceDock, WalletModal)
-- `app/_lib/`: formatting, Solana helpers, market data clients, hooks, `wallets.js` (encrypted wallet store and signing), `guard.js` (trade safety check), `trade.js` (one trade path for the panel and voice)
+- `app/page.js`: routing (`?ca=<mint>`, `?view=pulse`, `?view=positions`), active wallet, balances, coin data, quick buy
+- `app/_components/`: UI pieces (TopBar, TokenHeader, PriceChart, TradePanel, TokenFacts, DataTabs, Trades, Holders, Positions, Discover, Pulse, CoinBits, StatusBar, Toasts, VoiceDock, WalletModal)
+- `app/_lib/`: formatting, Solana helpers, market data clients, hooks, `pump.js` (live list data: DexScreener refresh, PumpPortal stream, mini chart points), `bonding.js` (pump.fun curve math), `wallets.js` (encrypted wallet store and signing), `guard.js` (trade safety check), `trade.js` (one trade path for the panel and voice)
 - `app/globals.css`: design tokens and all styles
 
 ## Environment variables (Vercel → Project → Settings → Environment Variables)
@@ -61,6 +68,7 @@ The site sends `frame-ancestors 'none'` so no other page can embed the terminal 
 | `OPENAI_API_KEY` | voice commands (`/api/voice`) |
 | `OPENAI_MODEL` (optional) | model that understands commands, default `gpt-4.1-mini` |
 | `OPENAI_TRANSCRIBE_MODEL` (optional) | speech-to-text model, default `gpt-4o-mini-transcribe` |
+| `JUPITER_API_KEY` (optional) | holder count, top 10 and dev share in the lists; without it the lists just hide those numbers |
 
 ## Deploy
 

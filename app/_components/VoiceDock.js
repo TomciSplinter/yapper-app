@@ -258,7 +258,10 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
           return say(cmd.reply || 'Okay.');
         case 'navigate':
           navigate(cmd.target || 'discover');
-          return say(cmd.reply || (cmd.target === 'positions' ? 'Here are your positions.' : 'Here is what is trending.'));
+          return say(
+            cmd.reply ||
+              (cmd.target === 'positions' ? 'Here are your positions.' : cmd.target === 'pulse' ? 'Here is Pulse, with the newest coins.' : 'Here is what is trending.')
+          );
         case 'open': {
           const coin = await resolveCoin(cmd);
           if (!coin) return fail(cmd.coin ? `I couldn't find a Solana coin called ${cmd.coin}.` : 'Which coin should I open?');

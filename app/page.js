@@ -8,6 +8,7 @@ import TradePanel from './_components/TradePanel';
 import TokenFacts from './_components/TokenFacts';
 import DataTabs from './_components/DataTabs';
 import Discover from './_components/Discover';
+import Pulse from './_components/Pulse';
 import Positions from './_components/Positions';
 import StatusBar from './_components/StatusBar';
 import Toasts from './_components/Toasts';
@@ -26,6 +27,7 @@ import {
   disconnectExternal,
 } from './_lib/wallets';
 import { fetchPair, fetchSolPrice } from './_lib/markets';
+import { executeTrade } from './_lib/trade';
 import { useHolders, useToasts } from './_lib/hooks';
 import { usd, sol, age, dexLabel } from './_lib/format';
 
@@ -34,12 +36,13 @@ function readUrl() {
   const m = extractMint(q.get('ca'));
   if (m) return { view: 'token', mint: m };
   if (q.get('view') === 'positions') return { view: 'positions', mint: null };
+  if (q.get('view') === 'pulse') return { view: 'pulse', mint: null };
   return { view: 'discover', mint: null };
 }
 
 export default function App() {
   const [booted, setBooted] = useState(false);
-  const [view, setView] = useState('discover'); // discover | positions | token
+  const [view, setView] = useState('discover'); // discover | pulse | positions | token
   const [mint, setMint] = useState(null);
   const [side, setSide] = useState('buy');
 
@@ -72,7 +75,12 @@ export default function App() {
   }, []);
 
   const go = useCallback((nextView, nextMint = null) => {
-    const url = nextView === 'token' && nextMint ? `/?ca=${nextMint}` : nextView === 'positions' ? '/?view=positions' : '/';
+    const url =
+      nextView === 'token' && nextMint
+        ? `/?ca=${nextMint}`
+        : nextView === 'positions' || nextView === 'pulse'
+        ? `/?view=${nextView}`
+        : '/';
     if (window.location.pathname + window.location.search !== url) window.history.pushState(null, '', url);
     setView(nextView);
     setMint(nextView === 'token' ? nextMint : null);
@@ -128,6 +136,8 @@ export default function App() {
       document.title = `${pair.baseToken.symbol} ${usd(pair.marketCap ?? pair.fdv)} | Yapper`;
     } else if (view === 'positions') {
       document.title = 'Positions | Yapper';
+    } else if (view === 'pulse') {
+      document.title = 'Pulse | Yapper';
     } else {
       document.title = 'Yapper Terminal';
     }
@@ -232,6 +242,20 @@ export default function App() {
     setTimeout(() => setBalTick((n) => n + 1), 5000);
   }, []);
 
+  // the Buy buttons in Discover and Pulse: spend the quick buy amount right away
+  const quickBuy = useCallback(
+    async (row, amount) => {
+      if (!wallet) return connect();
+      const amountSol = Number(amount);
+      if (!(amountSol > 0)) {
+        toast.show({ kind: 'error', title: 'Set a quick buy amount first', detail: 'Type how much SOL each Buy button spends.', autoClose: 5000 });
+        return;
+      }
+      await executeTrade({ wallet, mint: row.mint, side: 'buy', amountSol, symbol: row.symbol || row.name, toast, onTraded });
+    },
+    [wallet, connect, toast, onTraded]
+  );
+
   // what's on screen, for voice questions ("what's the market cap?")
   const ctxRef = useRef({});
   const priceUsd = Number(pair?.priceUsd) || null;
@@ -285,7 +309,9 @@ export default function App() {
       />
 
       <main className="main">
-        {booted && view === 'discover' && <Discover onOpenToken={openToken} />}
+        {booted && view === 'discover' && <Discover onOpenToken={openToken} onQuickBuy={quickBuy} />}
+
+        {booted && view === 'pulse' && <Pulse onOpenToken={openToken} onQuickBuy={quickBuy} solPrice={solPrice} />}
 
         {booted && view === 'positions' && (
           <section className="view" aria-labelledby="pv-title">

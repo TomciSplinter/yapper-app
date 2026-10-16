@@ -155,6 +155,47 @@ const PATHS = {
     </>
   ),
   bolt: <path d="M13 3 5 14h6l-1 7 8-11h-6z" />,
+  x: (
+    <>
+      <path d="M4.5 4h4.2l10.8 16h-4.2z" />
+      <path d="M19.2 4l-6.3 7.1M4.8 20l6.3-7.1" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8.5" r="3.2" />
+      <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
+      <path d="M15.5 5.6a3 3 0 0 1 0 5.8" />
+      <path d="M17.6 14.6a5 5 0 0 1 2.9 4.9" />
+    </>
+  ),
+  pie: (
+    <>
+      <path d="M12 3v9h9" />
+      <circle cx="12" cy="12" r="9" />
+    </>
+  ),
+  code: (
+    <>
+      <path d="m8.5 8-4 4 4 4" />
+      <path d="m15.5 8 4 4-4 4" />
+    </>
+  ),
+  cap: (
+    <>
+      <path d="m2.5 9.5 9.5-5 9.5 5-9.5 5z" />
+      <path d="M6.5 11.8V16c0 1.4 2.5 3 5.5 3s5.5-1.6 5.5-3v-4.2" />
+    </>
+  ),
+  pause: <path d="M9 5.5v13M15 5.5v13" />,
+  sliders: (
+    <>
+      <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="10" cy="17" r="2" />
+    </>
+  ),
+  pulse: <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
 };
 
 export function Icon({ name, size = 16, ...rest }) {

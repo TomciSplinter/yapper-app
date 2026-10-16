@@ -121,6 +121,14 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
           Discover
         </a>
         <a
+          href="/?view=pulse"
+          onClick={nav('pulse')}
+          className={view === 'pulse' ? 'on' : undefined}
+          aria-current={view === 'pulse' ? 'page' : undefined}
+        >
+          Pulse
+        </a>
+        <a
           href="/?view=positions"
           onClick={nav('positions')}
           className={view === 'positions' ? 'on' : undefined}
