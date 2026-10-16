@@ -18,6 +18,7 @@ export function usd(n) {
   if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(2)}M`;
   if (a >= 1e3) return `${s}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1)}K`;
   if (a === 0) return '$0';
+  if (a >= 100) return `${s}$${a.toFixed(0)}`;
   return `${s}$${a.toFixed(a >= 0.01 ? 2 : 4)}`;
 }
 
