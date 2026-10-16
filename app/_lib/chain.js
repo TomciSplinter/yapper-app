@@ -69,6 +69,41 @@ export async function rpc(method, params) {
   return j.result;
 }
 
+// Several RPC calls in one request, answered from the same moment on the node.
+// calls: [[method, params], ...]. Returns the results in the same order.
+export async function rpcBatch(calls) {
+  const t0 = nowMs();
+  let r;
+  try {
+    r = await fetch('/api/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: '2.0', id, method, params }))),
+    });
+  } catch {
+    health.errAt = Date.now();
+    emit();
+    throw new Error('Network error. Check your internet connection.');
+  }
+  let j = null;
+  try {
+    j = await r.json();
+  } catch {}
+  if (r.status >= 500 || !Array.isArray(j)) {
+    health.errAt = Date.now();
+    emit();
+    throw new Error(j?.error?.message || `Solana RPC error (${r.status})`);
+  }
+  health.latency = Math.round(nowMs() - t0);
+  health.okAt = Date.now();
+  emit();
+  return calls.map((_, i) => {
+    const item = j.find((x) => x && x.id === i);
+    if (!item || item.error) throw new Error(item?.error?.message || 'Solana RPC error');
+    return item.result;
+  });
+}
+
 export function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);

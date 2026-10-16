@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractMint, rpc, SOL_MINT } from '../_lib/chain';
 import { fetchPair } from '../_lib/markets';
 import { executeTrade } from '../_lib/trade';
+import { signerKind } from '../_lib/wallets';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
 import { Icon, TokenImage } from './Icons';
 
@@ -150,7 +151,7 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
       const side = cmd.action;
       if (!wallet) {
         connect();
-        return fail('Connect your wallet first, then say it again.');
+        return fail('Set up or connect a wallet first, then say it again.');
       }
       const coin = await resolveCoin(cmd);
       if (!coin) return fail(cmd.coin ? `I couldn't find a Solana coin called ${cmd.coin}.` : 'Open a coin first, or say which coin you mean.');
@@ -166,7 +167,13 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
         let amt = cmd.amount_sol ?? (cmd.amount_usd && solPrice ? cmd.amount_usd / solPrice : null);
         if (!amt) return say(`How much SOL should I spend on ${sym}? For example, buy 0.5 SOL.`);
         amt = Math.round(amt * 10000) / 10000;
-        if (solBal !== null && amt > solBal) return fail(`Not enough SOL. You have ${fmtSol(solBal)} SOL.`);
+        if (solBal !== null && amt > solBal) {
+          // the shown balance can lag a fresh deposit, so ask the chain before saying no
+          const fresh = await rpc('getBalance', [wallet, { commitment: 'confirmed' }])
+            .then((b) => b.value / 1e9)
+            .catch(() => solBal);
+          if (amt > fresh) return fail(`Not enough SOL. You have ${fmtSol(fresh)} SOL.`);
+        }
         const tokens = quoteIsSol && pn > 0 ? amt / pn : solPrice && pu > 0 ? (amt * solPrice) / pu : null;
         setPending({
           side,
@@ -217,7 +224,8 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
     if (!t) return;
     setPending(null);
     pendingRef.current = null;
-    setReply(t.side === 'buy' ? `Buying ${t.symbol}. Approve it in your wallet.` : `Selling ${t.percent}% of ${t.symbol}. Approve it in your wallet.`);
+    const approve = signerKind(wallet) === 'external' ? ' Approve it in your wallet.' : '';
+    setReply(t.side === 'buy' ? `Buying ${t.symbol}.${approve}` : `Selling ${t.percent}% of ${t.symbol}.${approve}`);
     setPhase('reply');
     scheduleClose(6000);
     await executeTrade({
@@ -429,13 +437,14 @@ export default function VoiceDock({ getContext, openToken, navigate, wallet, con
   // hold Space anywhere (outside text fields) to talk
   useEffect(() => {
     const typing = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    const inDialog = () => !!document.querySelector('[aria-modal="true"]');
     const down = (e) => {
-      if (e.code !== 'Space' || e.repeat || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.code !== 'Space' || e.repeat || typing(e.target) || inDialog() || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       pressDown();
     };
     const up = (e) => {
-      if (e.code !== 'Space' || typing(e.target)) return;
+      if (e.code !== 'Space' || typing(e.target) || (inDialog() && !recRef.current)) return;
       e.preventDefault();
       pressUp();
     };

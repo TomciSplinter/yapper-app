@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getProvider, SOL_MINT } from '../_lib/chain';
+import { rpc, SOL_MINT } from '../_lib/chain';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
 import { executeTrade, readTradeSettings, saveTradeSettings } from '../_lib/trade';
 
@@ -67,14 +67,9 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
       onConnect();
       return;
     }
-    const provider = getProvider();
-    if (!provider) {
-      onConnect();
-      return;
-    }
+    if (busy) return;
     if (isBuy) {
       if (!(buyNum > 0)) return setError('Enter how much SOL to spend.');
-      if (solBal !== null && buyNum > solBal) return setError(`Not enough SOL. You have ${fmtSol(solBal)} SOL.`);
     } else {
       if (!(sellNum > 0) || sellNum > 100) return setError('Enter a percentage between 1 and 100.');
       if (!(tokenBal > 0)) return setError(`You don't hold any ${sym}.`);
@@ -86,6 +81,14 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
 
     setBusy(true);
     try {
+      if (isBuy && solBal !== null && buyNum > solBal) {
+        // the shown balance can lag a fresh deposit, so ask the chain before saying no
+        const fresh = await rpc('getBalance', [wallet, { commitment: 'confirmed' }])
+          .then((b) => b.value / 1e9)
+          .catch(() => solBal);
+        if (buyNum > fresh) return setError(`Not enough SOL. You have ${fmtSol(fresh)} SOL.`);
+        onTraded?.();
+      }
       await executeTrade({
         wallet,
         mint,

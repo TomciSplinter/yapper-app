@@ -42,7 +42,8 @@ export async function POST(req) {
   }
 
   const slippage = Math.min(Math.max(Number(b.slippage) || 10, 0.5), 50);
-  const priorityFee = Math.min(Math.max(Number(b.priorityFee) || 0.0005, 0), 0.01);
+  const fee = Number(b.priorityFee);
+  const priorityFee = Number.isFinite(fee) && fee >= 0 ? Math.min(fee, 0.01) : 0.0005;
 
   const upstream = await fetch('https://pumpportal.fun/api/trade-local', {
     method: 'POST',

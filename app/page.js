@@ -12,7 +12,19 @@ import Positions from './_components/Positions';
 import StatusBar from './_components/StatusBar';
 import Toasts from './_components/Toasts';
 import VoiceDock from './_components/VoiceDock';
+import WalletModal from './_components/WalletModal';
 import { extractMint, getProvider, rpc } from './_lib/chain';
+import {
+  initWallets,
+  useWallets,
+  activePubkey,
+  getState as walletState,
+  openWalletModal,
+  setActive,
+  setExternal,
+  externalName,
+  disconnectExternal,
+} from './_lib/wallets';
 import { fetchPair, fetchSolPrice } from './_lib/markets';
 import { useHolders, useToasts } from './_lib/hooks';
 import { usd, sol, age, dexLabel } from './_lib/format';
@@ -34,7 +46,9 @@ export default function App() {
   const [pair, setPair] = useState(null);
   const [pairState, setPairState] = useState('idle'); // idle | loading | found | none
 
-  const [wallet, setWallet] = useState(null);
+  // the active wallet: a built-in Yapper wallet or a connected wallet app
+  const wallets = useWallets();
+  const wallet = activePubkey(wallets);
   const [solBal, setSolBal] = useState(null);
   const [tokenBal, setTokenBal] = useState(null);
   const [balTick, setBalTick] = useState(0);
@@ -139,51 +153,26 @@ export default function App() {
   }, []);
 
   /* wallet */
-  const connect = useCallback(async () => {
-    const p = getProvider();
-    if (!p) {
-      // on a phone without an injected wallet, reopen this page inside Phantom
-      if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
-        const url = encodeURIComponent(window.location.href);
-        window.location.href = `https://phantom.app/ul/browse/${url}?ref=${encodeURIComponent(window.location.origin)}`;
-        return;
-      }
-      toast.show({
-        kind: 'info',
-        title: 'No Solana wallet found',
-        detail: 'Install Phantom, Solflare or Backpack, then reload this page.',
-        autoClose: 8000,
-      });
-      window.open('https://phantom.app/download', '_blank', 'noopener');
-      return;
-    }
-    try {
-      await p.connect();
-      const pk = p.publicKey?.toString();
-      if (pk) setWallet(pk);
-    } catch (e) {
-      toast.show({ kind: 'error', title: 'Wallet not connected', detail: e?.message || 'The request was rejected.', autoClose: 6000 });
-    }
-  }, [toast]);
-
-  const disconnect = useCallback(async () => {
-    try {
-      await getProvider()?.disconnect();
-    } catch {}
-    setWallet(null);
+  useEffect(() => {
+    initWallets();
   }, []);
 
-  // reconnect silently if this site was approved before
+  const connect = useCallback(() => openWalletModal('home'), []);
+  const disconnect = useCallback(() => disconnectExternal(), []);
+
+  // reconnect a wallet app silently if this site was approved before
   useEffect(() => {
     const p = getProvider();
     if (!p?.connect) return;
     p.connect({ onlyIfTrusted: true })
       .then(() => {
         const pk = p.publicKey?.toString();
-        if (pk) setWallet(pk);
+        if (!pk) return;
+        setExternal(pk, externalName(p));
+        if (!walletState().active) setActive({ type: 'external' });
       })
       .catch(() => {});
-    const onChange = (pk) => setWallet(pk ? pk.toString() : null);
+    const onChange = (pk) => setExternal(pk ? pk.toString() : null, externalName(p));
     p.on?.('accountChanged', onChange);
     return () => p.removeListener?.('accountChanged', onChange);
   }, []);
@@ -385,6 +374,7 @@ export default function App() {
           />
         }
       />
+      <WalletModal toast={toast} solPrice={solPrice} onChanged={onTraded} />
       <Toasts items={toasts} onDismiss={toast.dismiss} />
     </div>
   );

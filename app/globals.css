@@ -513,32 +513,88 @@ p {
   color: var(--ink);
   font-weight: 600;
 }
+.wm-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wm-lock {
+  color: var(--ink-3);
+}
+.wm-skel {
+  display: block;
+  width: 132px;
+  height: 34px;
+  border-radius: var(--r-md);
+  background: var(--raise);
+}
 .wm-menu {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
   z-index: 40;
   display: grid;
-  min-width: 200px;
+  width: 260px;
+  max-height: min(520px, calc(100dvh - 90px));
+  overflow-y: auto;
   padding: 6px;
   background: var(--pane);
   border: 1px solid var(--rule-2);
   border-radius: var(--r-lg);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65);
 }
-.wm-menu > * {
+.wm-menu a,
+.wm-menu button {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 36px;
+  min-height: 36px;
   padding: 0 10px;
   border-radius: var(--r-sm);
   color: var(--ink-2);
   text-align: left;
 }
-.wm-menu > *:hover {
+.wm-menu a:hover,
+.wm-menu button:hover {
   background: var(--raise-2);
   color: var(--ink);
+}
+.wm-label {
+  padding: 6px 10px 4px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.wm-menu .wm-pick {
+  padding: 6px 10px;
+}
+.wm-pick-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+.wm-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 500;
+}
+.wm-pick-sub {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.wm-pick .up {
+  flex: none;
+}
+.wm-menu .wm-warn {
+  color: var(--warn);
+}
+.wm-sep {
+  height: 1px;
+  margin: 5px 2px;
+  background: var(--rule);
 }
 
 /* ---------- coin view ---------- */
@@ -1560,6 +1616,537 @@ p {
   height: 36px;
 }
 
+/* ---------- wallet manager ---------- */
+
+.btn-block {
+  width: 100%;
+  height: 42px;
+}
+.wmd .btn-primary:disabled,
+.wmd .btn-danger:disabled {
+  opacity: 1;
+  background: var(--raise-2);
+  color: var(--ink-3);
+}
+.btn-danger {
+  background: var(--down);
+  color: var(--down-ink);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--down-hover);
+}
+.chip-on {
+  background: rgba(0, 245, 168, 0.1);
+  color: var(--mint);
+}
+.chip-warn {
+  background: rgba(245, 183, 78, 0.12);
+  color: var(--warn);
+}
+
+.wmd-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: wmd-fade 0.15s ease-out;
+}
+@keyframes wmd-fade {
+  from {
+    opacity: 0;
+  }
+}
+.wmd {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  width: min(460px, 100%);
+  max-height: min(740px, calc(100dvh - 48px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 18px;
+  background: #0b110e;
+  border: 1px solid var(--rule-2);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.75);
+  animation: wmd-in 0.18s ease-out;
+}
+.wmd:focus {
+  outline: none;
+}
+@keyframes wmd-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.wmd-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+.wmd-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.wmd-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wmd-lead {
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.wmd-options {
+  display: grid;
+  gap: 8px;
+}
+.wmd-option {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule-2);
+  background: var(--raise);
+  text-align: left;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.wmd-option:hover:not(:disabled) {
+  border-color: var(--rule-hot);
+  background: var(--raise-2);
+}
+.wmd-option-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--raise-2);
+  color: var(--ink-2);
+}
+.wmd-option.primary {
+  border-color: rgba(0, 245, 168, 0.3);
+}
+.wmd-option.primary .wmd-option-icon {
+  background: rgba(0, 245, 168, 0.12);
+  color: var(--mint);
+}
+.wmd-option-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.wmd-option-text b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.wmd-option-text span {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.wl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wl-item {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--raise);
+  overflow: hidden;
+}
+.wl-item.active {
+  border-color: rgba(0, 245, 168, 0.32);
+}
+.wl-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+}
+.wl-row:hover:not(:disabled) {
+  background: var(--raise-2);
+}
+.wl-av {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--raise-2);
+  color: var(--ink-2);
+  font-weight: 650;
+}
+.wl-item.active .wl-av {
+  background: rgba(0, 245, 168, 0.12);
+  color: var(--mint);
+}
+.wl-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.wl-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.wl-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+.wl-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.wl-bal {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  white-space: nowrap;
+}
+.wl-bal b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.wl-bal b span,
+.wl-bal > span {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.wl-connect {
+  color: var(--mint);
+  font-size: 12px;
+  font-weight: 600;
+}
+.wl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 12px 12px 54px;
+}
+.wl-actions .btn {
+  gap: 6px;
+}
+.wl-actions .wl-warn {
+  color: var(--warn);
+  border-color: rgba(245, 183, 78, 0.4);
+}
+.wl-actions .wl-danger:hover {
+  color: var(--down);
+  border-color: rgba(255, 92, 116, 0.45);
+}
+
+.wmd-form {
+  display: grid;
+  gap: 12px;
+}
+.wmd-field {
+  display: grid;
+  gap: 6px;
+}
+.wmd-field label,
+.wmd-label-row {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.wmd-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wmd-avail {
+  color: var(--ink);
+  font-weight: 600;
+}
+.wmd-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 42px;
+  padding: 0 6px 0 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule-2);
+  background: var(--raise);
+}
+.wmd-input:focus-within {
+  border-color: var(--rule-hot);
+  box-shadow: 0 0 0 3px rgba(0, 245, 168, 0.12);
+}
+.wmd-input input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 15px;
+}
+.wmd-input input.mono {
+  font-size: 13px;
+}
+.wmd-input input.masked {
+  -webkit-text-security: disc;
+}
+.wmd-input input::placeholder {
+  color: var(--ink-3);
+}
+.wmd-suffix {
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.wmd-max {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  background: var(--raise-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.wmd-max:hover:not(:disabled) {
+  color: var(--ink);
+}
+.wmd-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.wmd-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--mint);
+}
+.wmd-error {
+  color: var(--down);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.wmd-hint {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.wmd-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.wmd-row2 .btn {
+  height: 40px;
+  min-width: 0;
+}
+.wmd-link {
+  justify-self: center;
+  padding: 2px 4px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.wmd-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.wmd-foot {
+  display: flex;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.wmd-foot svg {
+  flex: none;
+  margin-top: 2px;
+}
+.wmd-warn {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 183, 78, 0.28);
+  background: rgba(245, 183, 78, 0.07);
+  color: #f1dcb4;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.wmd-warn svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}
+.wmd-warn.danger {
+  border-color: rgba(255, 92, 116, 0.32);
+  background: rgba(255, 92, 116, 0.07);
+  color: #ffd0d7;
+}
+.wmd-warn.danger svg {
+  color: var(--down);
+}
+.wmd-secret {
+  position: relative;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-2);
+  background: var(--void);
+}
+.wmd-secret code {
+  display: block;
+  color: var(--ink);
+  font: 13px/1.6 var(--font-mono), ui-monospace, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.wmd-secret.hidden code {
+  filter: blur(6px);
+  user-select: none;
+}
+.wmd-reveal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font-weight: 600;
+}
+.wmd-addr {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-2);
+  background: var(--void);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.wmd-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-3);
+}
+.wmd-meta b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.wmd-ok,
+.wmd-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.wmd-ok {
+  color: var(--up);
+  font-weight: 600;
+}
+.wmd-wait {
+  color: var(--ink-3);
+}
+.wmd-review {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-2);
+  background: var(--raise);
+}
+.wmd-review > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.wmd-review dt {
+  flex: none;
+  color: var(--ink-3);
+}
+.wmd-review dd {
+  min-width: 0;
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wmd-review dd.mono {
+  font-weight: 500;
+}
+.wmd-status {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 18px 0 6px;
+  text-align: center;
+}
+.wmd-status b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.wmd-status-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(0, 245, 168, 0.12);
+  color: var(--mint);
+}
+.wmd-status-icon.err {
+  background: rgba(255, 92, 116, 0.12);
+  color: var(--down);
+}
+.wmd-status-spin {
+  width: 30px;
+  height: 30px;
+  border-width: 3px;
+  color: var(--mint);
+}
+
 .soon {
   padding: 1px 6px;
   border-radius: 4px;
@@ -1575,7 +2162,7 @@ p {
   position: fixed;
   right: 16px;
   bottom: calc(var(--status) + 16px);
-  z-index: 60;
+  z-index: 90;
   display: grid;
   gap: 8px;
   width: min(360px, calc(100vw - 32px));
@@ -1805,11 +2392,40 @@ p {
     bottom: auto;
     width: calc(100vw - 24px);
   }
+  /* the wallet manager becomes a bottom sheet */
+  .wmd-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+  .wmd {
+    width: 100%;
+    max-height: 92dvh;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    border-bottom: 0;
+    border-radius: 16px 16px 0 0;
+    animation-name: wmd-up;
+  }
+  .wl-actions {
+    padding-left: 12px;
+  }
+  .wmd-input input,
+  .wmd-input input.mono {
+    font-size: 16px;
+  }
+  .wm-name {
+    max-width: 84px;
+  }
+}
+@keyframes wmd-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
 }
 
 @media (max-width: 420px) {
   .tb-brand span,
-  .wm-addr {
+  .wm-name {
     display: none;
   }
 }

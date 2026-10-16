@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { extractMint } from '../_lib/chain';
 import { usd, pct, tone, short, sol, dexLabel } from '../_lib/format';
+import { useWallets, activeWallet, setActive, openWalletModal, lock } from '../_lib/wallets';
 import { Icon, TokenImage } from './Icons';
 
 export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, onConnect, onDisconnect }) {
+  const walletsReady = useWallets().ready;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -197,7 +199,9 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
       </form>
 
       <div className="tb-wallet">
-        {wallet ? (
+        {!walletsReady ? (
+          <span className="wm-skel" aria-hidden="true" />
+        ) : wallet ? (
           <WalletMenu wallet={wallet} solBal={solBal} onDisconnect={onDisconnect} />
         ) : (
           <button type="button" className="btn btn-primary" onClick={onConnect}>
@@ -210,6 +214,9 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
 }
 
 function WalletMenu({ wallet, solBal, onDisconnect }) {
+  const ws = useWallets();
+  const info = activeWallet(ws);
+  const local = info?.type === 'local';
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const ref = useRef(null);
@@ -238,6 +245,17 @@ function WalletMenu({ wallet, solBal, onDisconnect }) {
     } catch {}
   };
 
+  const pick = (active) => {
+    setActive(active);
+    setOpen(false);
+  };
+  const manage = (view, details) => {
+    setOpen(false);
+    openWalletModal(view, details);
+  };
+
+  const isActive = (w) => ws.active?.type === 'local' && ws.active.id === w.id;
+
   return (
     <div className="wm" ref={ref}>
       <button
@@ -245,35 +263,102 @@ function WalletMenu({ wallet, solBal, onDisconnect }) {
         className="wm-btn"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={`Wallet ${info?.name || ''}, ${solBal === null ? 'balance loading' : `${sol(solBal)} SOL`}`}
         onClick={() => setOpen((o) => !o)}
       >
+        <Icon name="wallet" size={15} />
         <span className="wm-bal">
           {solBal === null ? '—' : sol(solBal)} <span className="muted">SOL</span>
         </span>
-        <span className="wm-addr mono">{short(wallet)}</span>
+        <span className="wm-name">{info?.name || short(wallet)}</span>
+        {local && !ws.unlocked && <Icon name="lock" size={12} className="wm-lock" />}
         <Icon name="chevronDown" size={14} />
       </button>
       {open && (
         <div className="wm-menu" role="menu">
+          <div className="wm-label">Wallets</div>
+          {ws.wallets.map((w) => (
+            <button key={w.id} type="button" role="menuitemradio" aria-checked={isActive(w)} className="wm-pick" onClick={() => pick({ type: 'local', id: w.id })}>
+              <span className="wm-pick-main">
+                <span className="wm-pick-name">{w.name}</span>
+                <span className="wm-pick-sub mono">{short(w.pubkey)}</span>
+              </span>
+              {isActive(w) && <Icon name="check" size={15} className="up" />}
+            </button>
+          ))}
+          {ws.external && (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={ws.active?.type === 'external'}
+              className="wm-pick"
+              onClick={() => pick({ type: 'external' })}
+            >
+              <span className="wm-pick-main">
+                <span className="wm-pick-name">{ws.externalName || 'Wallet app'}</span>
+                <span className="wm-pick-sub mono">{short(ws.external)}</span>
+              </span>
+              {ws.active?.type === 'external' && <Icon name="check" size={15} className="up" />}
+            </button>
+          )}
+          <div className="wm-sep" role="separator" />
+          {local && !info.backedUp && (
+            <button type="button" role="menuitem" className="wm-warn" onClick={() => manage('export', { id: info.id })}>
+              <Icon name="alert" size={15} />
+              Back up this wallet
+            </button>
+          )}
           <button type="button" role="menuitem" onClick={copy}>
             <Icon name={copied ? 'check' : 'copy'} size={15} />
             {copied ? 'Copied' : 'Copy address'}
           </button>
+          {local && (
+            <button type="button" role="menuitem" onClick={() => manage('deposit', { id: info.id })}>
+              <Icon name="deposit" size={15} />
+              Deposit
+            </button>
+          )}
+          {local && (
+            <button type="button" role="menuitem" onClick={() => manage('withdraw', { id: info.id })}>
+              <Icon name="withdraw" size={15} />
+              Withdraw
+            </button>
+          )}
           <a role="menuitem" href={`https://solscan.io/account/${wallet}`} target="_blank" rel="noreferrer">
             <Icon name="external" size={15} />
             View on Solscan
           </a>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onDisconnect();
-            }}
-          >
-            <Icon name="logout" size={15} />
-            Disconnect
+          <div className="wm-sep" role="separator" />
+          <button type="button" role="menuitem" onClick={() => manage('home')}>
+            <Icon name="wallet" size={15} />
+            Manage wallets
           </button>
+          {ws.hasVault && ws.unlocked && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                lock();
+              }}
+            >
+              <Icon name="lock" size={15} />
+              Lock wallets
+            </button>
+          )}
+          {info?.type === 'external' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onDisconnect();
+              }}
+            >
+              <Icon name="logout" size={15} />
+              Disconnect {info.name}
+            </button>
+          )}
         </div>
       )}
     </div>
