@@ -39,6 +39,45 @@ const expiryText = (ms) => {
 };
 
 export function PendingCard({ pending: p, onConfirm, onCancel }) {
+  if (p.kind === 'cancel_orders') {
+    return (
+      <div className="vp-card">
+        <ul className="vp-many vp-list">
+          {p.items.map((it) => (
+            <li key={it.id} className="vp-many-row two">
+              <span className="vp-many-sym">{it.label}</span>
+              <span className="muted">{it.text}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="vp-actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Keep {p.items.length > 1 ? 'them' : 'it'}
+          </button>
+          <button type="button" className="btn btn-sell" onClick={onConfirm}>
+            Cancel {p.items.length > 1 ? `${p.items.length} orders` : 'order'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (p.kind === 'setting') {
+    return (
+      <div className="vp-card">
+        <p className="vp-note">{p.text}. That changes every trade from now on.</p>
+        <div className="vp-actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onConfirm}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (p.kind === 'sell_many') {
     const total = p.items.reduce((s, it) => s + (it.valueUsd || 0), 0);
     return (
@@ -58,6 +97,12 @@ export function PendingCard({ pending: p, onConfirm, onCancel }) {
             <dt>Sell</dt>
             <dd>{p.percent === 100 ? 'All' : `${p.percent}%`} of each</dd>
           </div>
+          {p.rule && (
+            <div>
+              <dt>Coins</dt>
+              <dd>{p.rule.replace(/^./, (c) => c.toUpperCase())}</dd>
+            </div>
+          )}
           <div>
             <dt>Worth now</dt>
             <dd>≈ {usd(total * (p.percent / 100))}</dd>

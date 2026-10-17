@@ -5,7 +5,8 @@
 //    for coins, answer a question...). Nothing is executed here: the browser
 //    shows a confirm step before anything that spends or sells.
 
-import { SCHEMA, SYSTEM, clean } from './command';
+import { SCHEMA, SYSTEM, clean, scrubContext, wantsLists, plainText } from './command';
+import { sameOrigin, clientIp, makeLimiter } from '../_guard';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -15,15 +16,7 @@ const MAX_AUDIO = 4 * 1024 * 1024;
 const MAX_CONTEXT = 60000;
 
 // light per-instance rate limit so nobody can burn the OpenAI key
-const hits = new Map();
-function limited(ip) {
-  const now = Date.now();
-  const list = (hits.get(ip) || []).filter((t) => now - t < 60000);
-  list.push(now);
-  hits.set(ip, list);
-  if (hits.size > 5000) hits.clear();
-  return list.length > 30;
-}
+const limited = makeLimiter(30);
 
 async function transcribe(key, audio, hint) {
   const models = [process.env.OPENAI_TRANSCRIBE_MODEL, 'gpt-4o-mini-transcribe', 'whisper-1'].filter(Boolean);
@@ -95,12 +88,12 @@ function fit(context) {
 function cleanHistory(h) {
   if (!Array.isArray(h)) return [];
   return h.slice(-6).map((t) => ({
-    said: String(t?.said || '').slice(0, 200),
-    reply: String(t?.reply || '').slice(0, 400),
-    action: String(t?.action || '').slice(0, 20),
-    coin: t?.coin && typeof t.coin === 'object' ? { mint: String(t.coin.mint || '').slice(0, 44), symbol: String(t.coin.symbol || '').slice(0, 16) } : null,
+    said: plainText(t?.said, 200),
+    reply: plainText(t?.reply, 400),
+    action: plainText(t?.action, 20),
+    coin: t?.coin && typeof t.coin === 'object' ? { mint: plainText(t.coin.mint, 44), symbol: plainText(t.coin.symbol, 16) } : null,
     listed: Array.isArray(t?.listed)
-      ? t.listed.slice(0, 10).map((x, i) => ({ n: i + 1, mint: String(x?.mint || '').slice(0, 44), symbol: String(x?.symbol || '').slice(0, 16) }))
+      ? t.listed.slice(0, 10).map((x, i) => ({ n: i + 1, mint: plainText(x?.mint, 44), symbol: plainText(x?.symbol, 16) }))
       : [],
   }));
 }
@@ -109,8 +102,8 @@ export async function POST(req) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return Response.json({ error: 'Voice is not set up yet: OPENAI_API_KEY is missing on the server.' }, { status: 500 });
 
-  const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
-  if (limited(ip)) return Response.json({ error: 'Too many voice commands. Wait a moment and try again.' }, { status: 429 });
+  if (!sameOrigin(req)) return Response.json({ error: 'Forbidden' }, { status: 403 });
+  if (limited(clientIp(req))) return Response.json({ error: 'Too many voice commands. Wait a moment and try again.' }, { status: 429 });
 
   let form;
   try {
@@ -127,7 +120,8 @@ export async function POST(req) {
   try {
     history = cleanHistory(JSON.parse(String(form.get('history') || '[]')));
   } catch {}
-  context = fit(context && typeof context === 'object' ? context : {});
+  // names and tickers are set by whoever made the coin: short and plain only
+  context = scrubContext(context && typeof context === 'object' && !Array.isArray(context) ? context : {});
 
   let transcript = String(form.get('text') || '').trim().slice(0, 300);
   const audio = form.get('audio');
@@ -138,7 +132,9 @@ export async function POST(req) {
       transcript = await transcribe(key, audio, context?.coin?.symbol);
     }
     if (!transcript) return Response.json({ error: "I didn't catch that. Try again." }, { status: 400 });
-    const command = clean(await understand(key, transcript, context, history));
+    // coin lists (third-party names) only go to the assistant for a scan
+    if (!wantsLists(transcript)) delete context.lists;
+    const command = clean(await understand(key, transcript, fit(context), history));
     return Response.json({ transcript, command });
   } catch (e) {
     return Response.json({ error: String(e?.message || 'Voice failed').slice(0, 200), transcript }, { status: 502 });

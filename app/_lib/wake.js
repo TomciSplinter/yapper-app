@@ -5,9 +5,10 @@
 // without the wake word.
 
 const WAKE = /\b(?:[yj]app?(?:er|ers|a|ah)|yap+ (?:her|er))\b[\s,.!?:;-]*/i;
-const REPLY = /^\s*(yes|yeah|yep|yup|sure|confirm|confirmed|do it|send it|go|go ahead|no|nope|cancel|stop|never ?mind)\b/i;
+// a plain yes or no, and nothing else (a longer sentence needs "Yapper" first)
+const REPLY = /^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|confirm(?:ed)?|do it|send it|go(?: ahead)?|igen|mehet|no|nope|nem|cancel|stop|never ?mind)(?:\s+(?:please|now|thanks|thank you))?[\s.!?,]*$/i;
 const AFTER_WAKE_MS = 7000;
-const REPLY_MS = 30000;
+const REPLY_MS = 15000;
 
 export function wakeSupported() {
   return typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition);

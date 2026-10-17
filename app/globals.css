@@ -1219,6 +1219,7 @@ p {
   display: grid;
   gap: 10px;
   margin-top: 24px;
+  padding: 0 16px;
 }
 .os-head {
   display: flex;
@@ -1978,6 +1979,19 @@ p {
   align-items: center;
   gap: 8px;
   font-size: 13px;
+}
+.vp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vp-many-row.two {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.vp-many-row.two .muted {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .vp-many-sym {
   overflow: hidden;
@@ -3503,6 +3517,9 @@ p {
   }
   .view-head {
     padding: 16px 12px 12px;
+  }
+  .os {
+    padding: 0 12px;
   }
   .view-head .seg {
     max-width: 100%;

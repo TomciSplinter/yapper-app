@@ -31,8 +31,11 @@ export async function getQuotes(mints, solPrice) {
   const out = new Map();
   for (let i = 0; i < list.length; i += 30) {
     const chunk = list.slice(i, i + 30);
+    // a stuck request mustn't stall the order runner
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
     try {
-      const r = await fetch(`${DS}/tokens/v1/solana/${chunk.join(',')}`, { headers: { accept: 'application/json' } });
+      const r = await fetch(`${DS}/tokens/v1/solana/${chunk.join(',')}`, { headers: { accept: 'application/json' }, signal: ctl.signal });
       if (!r.ok) continue;
       const arr = await r.json();
       for (const m of chunk) {
@@ -41,7 +44,10 @@ export async function getQuotes(mints, solPrice) {
           out.set(m, { ...p, supply: p.priceUsd > 0 ? p.mc / p.priceUsd : null });
         }
       }
-    } catch {}
+    } catch {
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // not on DexScreener yet: read the pump.fun curve itself

@@ -30,7 +30,8 @@ import {
 import { fetchPair, fetchSolPrice } from './_lib/markets';
 import { executeTrade } from './_lib/trade';
 import { loadHolding } from './_lib/holdings';
-import { useFills, summarize } from './_lib/fills';
+import { useFills } from './_lib/fills';
+import { ownSummary } from './_lib/portfolio';
 import { startOrderEngine, useOrders, isLive } from './_lib/orders';
 import { createCallouts } from './_lib/callouts';
 import { useHolders, useToasts } from './_lib/hooks';
@@ -254,7 +255,8 @@ export default function App() {
       : solPrice && Number(pair?.priceUsd) > 0
       ? Number(pair.priceUsd) / solPrice
       : null;
-  const position = summarize(fills, tokenBal, priceSolNow);
+  // PnL over the coins you bought (coins sent to you have no entry)
+  const { s: position, known: entryKnown } = ownSummary(fills, tokenBal, priceSolNow);
 
   const onTraded = useCallback(() => {
     setBalTick((n) => n + 1);
@@ -314,7 +316,8 @@ export default function App() {
               ? {
                   bought_sol: position.boughtSol,
                   sold_sol: position.soldSol,
-                  avg_entry_market_cap_usd: solPrice && supply ? position.avgEntry * solPrice * supply : null,
+                  avg_entry_market_cap_usd: entryKnown && solPrice && supply ? position.avgEntry * solPrice * supply : null,
+                  entry_covers_holding: entryKnown,
                   pnl_sol: position.pnl,
                   pnl_usd: solPrice ? position.pnl * solPrice : null,
                   pnl_pct: position.pnlPct,

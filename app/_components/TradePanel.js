@@ -5,7 +5,7 @@ import { rpc, SOL_MINT } from '../_lib/chain';
 import { amount as fmtAmount, sol as fmtSol, usd, pct } from '../_lib/format';
 import { loadHolding } from '../_lib/holdings';
 import { executeTrade, readTradeSettings, saveTradeSettings } from '../_lib/trade';
-import { createOrder, bracketAfterBuy, parseMc, alreadyHit, DEFAULT_EXPIRY } from '../_lib/orders';
+import { createOrder, bracketAfterBuy, saveBracketIntent, bracketIntentSent, parseMc, DEFAULT_EXPIRY } from '../_lib/orders';
 import { SETTINGS_EVENT } from '../_lib/voicebus';
 import OrdersList from './Orders';
 
@@ -83,7 +83,10 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
 
   // limit orders trigger on market cap
   const mcNow = Number(pair?.marketCap ?? pair?.fdv) || null;
-  const entryMc = position && position.avgEntry > 0 && solPrice && supply > 0 ? position.avgEntry * solPrice * supply : null;
+  // the average entry only means something when the trades we know of explain
+  // (nearly) all of what you hold, not for coins that were sent to you
+  const entryKnown = position && position.avgEntry > 0 && tokenBal > 0 && position.bought - position.sold >= 0.95 * tokenBal;
+  const entryMc = entryKnown && solPrice && supply > 0 ? position.avgEntry * solPrice * supply : null;
   const targetMc = parseMc(trigger);
   const dir = targetMc && mcNow ? (targetMc >= mcNow ? 'above' : 'below') : null;
   const chips = isBuy
@@ -116,8 +119,9 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
     if (!targetMc) return setError('Enter the market cap to trigger at, like 8K or 1.2M.');
     if (!mcNow) return setError("This coin's market cap isn't available yet.");
     if (Math.abs(targetMc / mcNow - 1) < 0.005) return setError('That is the current market cap. Use Market to trade now.');
+    let held = null;
     if (!isBuy) {
-      let held = tokenBal;
+      held = tokenBal;
       if (!(held > 0)) {
         try {
           held = (await loadHolding(wallet, mint)).amount;
@@ -145,6 +149,7 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
         targetMc,
         dir,
         createdMc: mcNow,
+        heldAtCreate: held,
         expiresInMs: isBuy ? DEFAULT_EXPIRY.buy : DEFAULT_EXPIRY.sell,
         slippage: Number(slippage),
         prioFee: Number(prioFee),
@@ -198,6 +203,9 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
       const tp = isBuy && bracket && Number(tpX) > 1 ? { kind: 'multiple', value: Number(tpX) } : null;
       const sl = isBuy && bracket && Number(slPct) > 0 && Number(slPct) < 100 ? { kind: 'percent', value: -Number(slPct) } : null;
       if (isBuy && bracket && !tp && !sl) return setError('Set a take profit above 1x or a stop loss between 1% and 99%.');
+      const plan = { wallet, mint, symbol: sym, name: pair?.baseToken?.name, image: pair?.info?.imageUrl, tp, sl, fallbackMc: mcNow };
+      // saved before the buy goes out, so a closed tab doesn't lose it
+      const intentId = tp || sl ? saveBracketIntent(plan) : null;
       const res = await executeTrade({
         wallet,
         mint,
@@ -210,11 +218,14 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
         toast,
         onTraded,
         receiveHint: estimate,
+        beforeSend: intentId ? (sig) => bracketIntentSent(intentId, sig) : undefined,
       });
-      if (tp || sl) {
-        bracketAfterBuy(res, { wallet, mint, symbol: sym, name: pair?.baseToken?.name, image: pair?.info?.imageUrl, tp, sl, solPrice, fallbackMc: mcNow, source: 'panel' })
-          .then((made) => {
+      if (intentId) {
+        const sent = res.status === 'ok' || res.status === 'pending';
+        bracketAfterBuy(res, { ...plan, solPrice, source: 'panel', intentId })
+          .then(({ made, reason }) => {
             if (made.length) toast.show({ kind: 'success', title: 'Take profit / stop loss set', detail: made.map((o) => `${o.label} at ${usd(o.targetMc)}`).join(' · '), autoClose: 7000 });
+            if (sent && reason) toast.show({ kind: made.length ? 'info' : 'error', title: made.length ? 'Part of the TP / SL was not set' : 'Take profit / stop loss not set', detail: reason, autoClose: 12000 });
           })
           .catch(() => {});
       }

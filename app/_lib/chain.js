@@ -65,7 +65,13 @@ export async function rpc(method, params) {
   health.latency = Math.round(nowMs() - t0);
   health.okAt = Date.now();
   emit();
-  if (j.error) throw new Error(j.error.message || 'Solana RPC error');
+  if (j.error) {
+    // the node answered and refused (for sendTransaction: nothing was sent)
+    const err = new Error(j.error.message || 'Solana RPC error');
+    err.code = j.error.code;
+    err.rejected = true;
+    throw err;
+  }
   return j.result;
 }
 
@@ -172,11 +178,12 @@ export function getProvider() {
 }
 
 // Polls a signature. Returns true (confirmed), false (failed) or null (timed out).
-export async function waitForConfirm(sig, timeoutMs = 60000) {
+// true = confirmed, false = landed but failed, null = not seen within timeoutMs
+export async function waitForConfirm(sig, timeoutMs = 60000, { history = false } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const r = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: false }]);
+      const r = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: history }]);
       const s = r?.value?.[0];
       if (s) {
         if (s.err) return false;
@@ -186,4 +193,19 @@ export async function waitForConfirm(sig, timeoutMs = 60000) {
     await new Promise((res) => setTimeout(res, 1500));
   }
   return null;
+}
+
+// Status of several sent transactions: sig -> 'ok' | 'failed' | 'unknown'
+export async function signatureStates(sigs) {
+  const out = new Map();
+  const list = [...new Set(sigs.filter(Boolean))];
+  for (let i = 0; i < list.length; i += 100) {
+    const chunk = list.slice(i, i + 100);
+    const r = await rpc('getSignatureStatuses', [chunk, { searchTransactionHistory: true }]);
+    (r?.value || []).forEach((st, j) => {
+      const ok = st && !st.err && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized');
+      out.set(chunk[j], st?.err ? 'failed' : ok ? 'ok' : 'unknown');
+    });
+  }
+  return out;
 }

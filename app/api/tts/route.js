@@ -1,21 +1,15 @@
 // The orb's natural voice: text in, spoken audio (mp3) out, from OpenAI's
 // text-to-speech. The browser falls back to its own voice if this fails.
 
+import { sameOrigin, clientIp, makeLimiter } from '../_guard';
+
 export const dynamic = 'force-dynamic';
 export const maxDuration = 20;
 
 const OPENAI = 'https://api.openai.com/v1';
 const MAX_TEXT = 500;
 
-const hits = new Map();
-function limited(ip) {
-  const now = Date.now();
-  const list = (hits.get(ip) || []).filter((t) => now - t < 60000);
-  list.push(now);
-  hits.set(ip, list);
-  if (hits.size > 5000) hits.clear();
-  return list.length > 40;
-}
+const limited = makeLimiter(40);
 
 const INSTRUCTIONS =
   'You are the voice of a crypto trading terminal. Speak clearly, calmly and a little briskly, like a sharp trading assistant. Read numbers naturally (14.2K as "fourteen point two K", 0.25 SOL as "zero point two five sol").';
@@ -23,8 +17,8 @@ const INSTRUCTIONS =
 export async function POST(req) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return Response.json({ error: 'Voice is not set up' }, { status: 500 });
-  const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
-  if (limited(ip)) return Response.json({ error: 'Too many requests' }, { status: 429 });
+  if (!sameOrigin(req)) return Response.json({ error: 'Forbidden' }, { status: 403 });
+  if (limited(clientIp(req))) return Response.json({ error: 'Too many requests' }, { status: 429 });
 
   let body = {};
   try {

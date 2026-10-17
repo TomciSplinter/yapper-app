@@ -6,7 +6,8 @@
 // Runs in the same tab as orders (see orders.js), off the same price checks.
 
 import { loadPositions, gt, withPool, parseTrades } from './markets';
-import { cachedFills, summarize } from './fills';
+import { cachedFills } from './fills';
+import { ownSummary } from './portfolio';
 import { announce, getPrefs } from './voicebus';
 import { usd } from './format';
 
@@ -90,10 +91,10 @@ export function createCallouts({ getWallet, getSolPrice }) {
         say(`${sym} just graduated from the bonding curve to PumpSwap.`, p);
       }
 
-      // multiples of your entry
+      // multiples of your entry (only when your trades explain what you hold)
       const priceSol = q.priceSol || (solPrice && q.priceUsd ? q.priceUsd / solPrice : null);
-      const sum = priceSol ? summarize(cachedFills(w, p.mint), p.amount, priceSol) : null;
-      if (sum && sum.avgEntry > 0 && sum.held > 0) {
+      const { s: sum, known } = priceSol ? ownSummary(cachedFills(w, p.mint), p.amount, priceSol) : {};
+      if (known && sum && sum.avgEntry > 0 && sum.held > 0) {
         const mult = priceSol / sum.avgEntry;
         const hit = UPS.filter((x) => mult >= x).pop() || 1;
         if (hit > (s.up || 1)) {

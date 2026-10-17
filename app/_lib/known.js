@@ -17,16 +17,18 @@ function read(wallet) {
   }
 }
 
-// entries: [[mint, [token account addresses]], ...] -> one write
+// entries: [[mint, [token account addresses], time?], ...] -> one write
+// (time: when the transaction happened, so reading old history doesn't make
+// old coins look recent and push out the ones you trade now)
 export function rememberCoins(wallet, entries) {
   if (!wallet || !entries?.length) return;
   const all = read(wallet);
   const now = Date.now();
-  for (const [mint, accounts = []] of entries) {
+  for (const [mint, accounts = [], time] of entries) {
     if (!mint || mint === WSOL) continue;
     const cur = all[mint] || { at: 0, accounts: [] };
     const merged = [...new Set([...(cur.accounts || []), ...accounts.filter(Boolean)])].slice(-6);
-    all[mint] = { at: now, accounts: merged };
+    all[mint] = { at: Math.max(cur.at || 0, time > 0 ? time : now), accounts: merged };
   }
   const mints = Object.keys(all);
   if (mints.length > MAX_MINTS) {

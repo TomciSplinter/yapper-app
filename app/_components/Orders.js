@@ -17,7 +17,7 @@ function left(ms) {
   return `${Math.round(h / 24)}d left`;
 }
 
-const STATUS = { done: 'Done', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired', executing: 'Running…' };
+const STATUS = { done: 'Done', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired', executing: 'Running…', unconfirmed: 'Confirming…' };
 
 export default function OrdersList({ orders, showCoin = false, onOpenToken, empty }) {
   const now = useNow(30000);
@@ -26,6 +26,9 @@ export default function OrdersList({ orders, showCoin = false, onOpenToken, empt
     <ul className="ol">
       {orders.map((o) => {
         const live = isLive(o);
+        const running = o.status === 'executing' || o.status === 'unconfirmed';
+        // can be stopped until its trade is sent
+        const canCancel = live && !o.sig && o.status !== 'unconfirmed';
         const kind = o.type === 'alert' ? 'alert' : o.type === 'buy' ? 'buy' : o.dir === 'above' ? 'tp' : 'sl';
         return (
           <li key={o.id} className={`ol-row${live ? '' : ' done'}`}>
@@ -47,9 +50,9 @@ export default function OrdersList({ orders, showCoin = false, onOpenToken, empt
               </span>
             </span>
             <span className="ol-meta muted" title={o.note || undefined}>
-              {live ? (o.status === 'executing' ? STATUS.executing : o.expiresAt ? left(o.expiresAt - now) : 'No expiry') : STATUS[o.status] || o.status}
+              {live ? (running ? STATUS[o.status] : o.expiresAt ? left(o.expiresAt - now) : 'No expiry') : STATUS[o.status] || o.status}
             </span>
-            {live && o.status !== 'executing' ? (
+            {canCancel ? (
               <button type="button" className="icon-btn ol-x" onClick={() => cancelOrder(o.id)} aria-label={`Cancel ${orderLabel(o)} for ${o.symbol || 'this coin'}`}>
                 <Icon name="close" size={13} />
               </button>

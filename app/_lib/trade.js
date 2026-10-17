@@ -5,7 +5,7 @@
 
 import { VersionedTransaction } from '@solana/web3.js';
 import { rpc, b64ToBytes, bytesToB64, waitForConfirm } from './chain';
-import { ensureUnlocked, getState, signAs, signerKind } from './wallets';
+import { ensureUnlocked, getState, signAs, signerKind, b58encode } from './wallets';
 import { checkTrade } from './guard';
 import { recordTrade } from './fills';
 import { rememberCoin } from './known';
@@ -50,9 +50,15 @@ function speakFill(fill, { isBuy, sym, percent }) {
 }
 
 // side: 'buy' | 'sell'. Buys use amountSol, sells use percent (1-100).
-// Returns { status: 'ok' | 'failed' | 'pending' | 'cancelled' | 'error', sig, error, fill }
-// where `fill` is a promise for the trade as read back from the chain (or null).
-export async function executeTrade({ wallet, mint, side, amountSol, percent, symbol, slippage, prioFee, toast, onTraded, receiveHint }) {
+// Returns { status, sig, error, fill }:
+//   ok        confirmed on chain; `fill` is a promise for the trade as read back
+//   failed    landed on chain but failed (usually slippage); nothing was bought or sold
+//   pending   sent, but not confirmed yet (may still land; check `sig` later)
+//   cancelled the user said no (wallet popup or unlock)
+//   error     never sent (nothing can have happened)
+// beforeSend(sig) runs right before the signed transaction goes out (sig is
+// its id); returning false stops it there, with nothing sent.
+export async function executeTrade({ wallet, mint, side, amountSol, percent, symbol, slippage, prioFee, toast, onTraded, receiveHint, beforeSend }) {
   const isBuy = side === 'buy';
   const sym = symbol || 'this coin';
   const settings = readTradeSettings();
@@ -61,16 +67,73 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
   const kind = signerKind(wallet);
   const local = kind === 'local';
 
-  let sending = false; // past this point the trade may have reached the chain
+  let stage = 'prepare'; // prepare | unlock | sign | send
+  let sig = null;
   const id = toast.show({
     kind: 'pending',
     title: isBuy ? `Buying ${sym}` : `Selling ${sym}`,
     detail: local && !getState().unlocked ? 'Unlock your wallets to continue' : 'Preparing the transaction',
   });
+
+  const succeeded = () => {
+    // read the confirmed trade from the chain: feeds avg entry, PnL and chart
+    // markers, and catches the rare case where the coins didn't land here
+    const fill = recordTrade(wallet, mint, sig)
+      .then((f) => {
+        onTraded?.();
+        if (f && isBuy && !(f.tokens > 0)) {
+          toast.show({
+            kind: 'error',
+            title: `The ${sym} buy confirmed, but no coins arrived in this wallet`,
+            detail: 'Open the transaction to see where they went, and send it to support.',
+            sig,
+            autoClose: 30000,
+          });
+        } else if (f) {
+          speakFill(f, { isBuy, sym, percent });
+        }
+        return f;
+      })
+      .catch(() => null);
+    toast.update(id, {
+      kind: 'success',
+      title: isBuy ? `Bought ${sym}` : `Sold ${percent}% of ${sym}`,
+      detail: isBuy ? `Spent ${amountSol} SOL` : receiveHint ? `Received about ${receiveHint}` : null,
+      sig,
+      autoClose: 8000,
+    });
+    try {
+      window.dispatchEvent(new CustomEvent('yapper:traded', { detail: { wallet, mint, side, percent: isBuy ? null : Number(percent) } }));
+    } catch {}
+    return { status: 'ok', sig, fill };
+  };
+  const landedButFailed = () => {
+    toast.update(id, {
+      kind: 'error',
+      title: isBuy ? 'Buy failed' : 'Sell failed',
+      detail: 'The price moved past your slippage limit. Raise slippage or try again.',
+      sig,
+      autoClose: 15000,
+    });
+    return { status: 'failed', sig, error: 'The price moved past the slippage limit', fill: Promise.resolve(null) };
+  };
+  const notYetConfirmed = () => {
+    toast.update(id, {
+      kind: 'pending',
+      title: 'Still confirming',
+      detail: 'Solana is slow right now. Open the transaction to check its status before trying again.',
+      sig,
+      autoClose: 15000,
+    });
+    return { status: 'pending', sig, fill: Promise.resolve(null) };
+  };
+
   try {
     if (!wallet || !kind) throw new Error('Connect a wallet first.');
     if (local) {
+      stage = 'unlock';
       await ensureUnlocked();
+      stage = 'prepare';
       toast.update(id, { detail: 'Preparing the transaction' });
     }
     const r = await fetch('/api/trade', {
@@ -96,79 +159,48 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
       toast.update(id, { detail: 'Approve it in your wallet' });
     }
     // signs only with the kind of wallet that was checked above
+    stage = 'sign';
     const signed = await signAs(wallet, tx, kind);
+    // the signature is the transaction's id: known before it's sent
+    sig = b58encode(signed.signatures[0]);
 
+    if (beforeSend && beforeSend(sig) === false) throw new Error('Cancelled before sending');
     toast.update(id, { detail: 'Sending to Solana' });
-    sending = true;
-    const sig = await rpc('sendTransaction', [
+    stage = 'send';
+    rememberCoin(wallet, mint); // balance reads check this coin's accounts directly from now on
+    await rpc('sendTransaction', [
       bytesToB64(signed.serialize()),
       // built-in wallets just simulated it in checkTrade, so skip the second simulation
       { encoding: 'base64', skipPreflight: local, preflightCommitment: 'confirmed', maxRetries: 3 },
     ]);
 
-    rememberCoin(wallet, mint); // balance reads check this coin's accounts directly from now on
     toast.update(id, { detail: 'Waiting for confirmation', sig });
     const ok = await waitForConfirm(sig);
     onTraded?.();
-    if (ok === true) {
-      // read the confirmed trade from the chain: feeds avg entry, PnL and chart
-      // markers, and catches the rare case where the coins didn't land here
-      const fill = recordTrade(wallet, mint, sig)
-        .then((f) => {
-          onTraded?.();
-          if (f && isBuy && !(f.tokens > 0)) {
-            toast.show({
-              kind: 'error',
-              title: `The ${sym} buy confirmed, but no coins arrived in this wallet`,
-              detail: 'Open the transaction to see where they went, and send it to support.',
-              sig,
-              autoClose: 30000,
-            });
-          } else if (f) {
-            speakFill(f, { isBuy, sym, percent });
-          }
-          return f;
-        })
-        .catch(() => null);
-      toast.update(id, {
-        kind: 'success',
-        title: isBuy ? `Bought ${sym}` : `Sold ${percent}% of ${sym}`,
-        detail: isBuy ? `Spent ${amountSol} SOL` : receiveHint ? `Received about ${receiveHint}` : null,
-        sig,
-        autoClose: 8000,
-      });
-      try {
-        window.dispatchEvent(new CustomEvent('yapper:traded', { detail: { wallet, mint, side, percent: isBuy ? null : Number(percent) } }));
-      } catch {}
-      return { status: 'ok', sig, fill };
-    }
-    if (ok === false) {
-      toast.update(id, {
-        kind: 'error',
-        title: isBuy ? 'Buy failed' : 'Sell failed',
-        detail: 'The price moved past your slippage limit. Raise slippage or try again.',
-        sig,
-        autoClose: 15000,
-      });
-      return { status: 'failed', sig, error: 'The price moved past the slippage limit', fill: Promise.resolve(null) };
-    }
-    toast.update(id, {
-      kind: 'pending',
-      title: 'Still confirming',
-      detail: 'Solana is slow right now. Open the transaction to check its status.',
-      sig,
-      autoClose: 15000,
-    });
-    return { status: 'pending', sig, fill: Promise.resolve(null) };
+    if (ok === true) return succeeded();
+    if (ok === false) return landedButFailed();
+    return notYetConfirmed();
   } catch (e) {
     const msg = String(e?.message || e);
-    const cancelled = /reject|denied|cancel/i.test(msg);
+    if (stage === 'send' && sig && !e?.rejected) {
+      // the send errored, but it may still have reached the network: look it up
+      // before calling it failed, so nobody sends the same trade twice
+      // (a node that answered with an error refused it, so that's a plain error)
+      toast.update(id, { detail: 'Checking whether it went through', sig });
+      const ok = await waitForConfirm(sig, 75000, { history: true });
+      onTraded?.();
+      if (ok === true) return succeeded();
+      if (ok === false) return landedButFailed();
+      return notYetConfirmed();
+    }
+    // only the wallet popup or the unlock prompt can be "cancelled"
+    const cancelled = (stage === 'sign' || stage === 'unlock') && /reject|denied|declin|cancel/i.test(msg);
     toast.update(id, {
       kind: cancelled ? 'info' : 'error',
       title: cancelled ? 'Transaction cancelled' : isBuy ? 'Buy failed' : 'Sell failed',
       detail: cancelled ? null : msg.slice(0, 180),
       autoClose: cancelled ? 4000 : 12000,
     });
-    return { status: cancelled ? 'cancelled' : 'error', error: msg.slice(0, 180), maybeSent: sending && !cancelled && /Network error|Solana RPC error \(/.test(msg), fill: Promise.resolve(null) };
+    return { status: cancelled ? 'cancelled' : 'error', error: msg.slice(0, 180), fill: Promise.resolve(null) };
   }
 }

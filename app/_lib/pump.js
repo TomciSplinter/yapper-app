@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SOL_MINT } from './chain';
 import { isPumpCurve } from './format';
 import { curveProgress, progressFromReserves, LAUNCH_PRICE_SOL, PUMP_SUPPLY } from './bonding';
+import { SETTINGS_EVENT } from './voicebus';
 
 const DS = 'https://api.dexscreener.com';
 const FEED_URL = 'wss://pumpportal.fun/api/data';
@@ -410,10 +411,26 @@ const QB_KEY = 'yapper:quick-buy';
 export function useQuickBuy() {
   const [amount, setAmount] = useState('0.1');
   useEffect(() => {
-    try {
-      const v = localStorage.getItem(QB_KEY);
-      if (v && Number(v) > 0) setAmount(v);
-    } catch {}
+    const load = () => {
+      try {
+        const v = localStorage.getItem(QB_KEY);
+        if (v && Number(v) > 0) setAmount(v);
+      } catch {}
+    };
+    load();
+    // changed by voice ("set quick buy to 0.5") or in another tab
+    const onSettings = (e) => {
+      if (e.detail?.quickBuy) load();
+    };
+    const onStorage = (e) => {
+      if (e.key === QB_KEY) load();
+    };
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(SETTINGS_EVENT, onSettings);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
   const save = (v) => {
     const clean = String(v).replace(',', '.').replace(/[^0-9.]/g, '').slice(0, 8);

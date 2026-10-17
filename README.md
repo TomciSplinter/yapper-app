@@ -14,13 +14,13 @@ Solana trading terminal at app.yapper.trade with voice trading: hold the orb (or
   - **Your position** under the trade button: SOL bought and sold, holding value, PnL (USD, %, SOL) and average entry as a market cap. Built from your trades on the chain, so it includes trades made in other apps and works on any device. Fees count toward cost; token-account rent doesn't.
 - **Positions**: every coin in the connected wallet (both token programs, including coins DexScreener doesn't list yet) with live value and PnL.
 - **Wallets**: create or import Yapper wallets that trade instantly with no popups, or connect Phantom, Solflare or Backpack. Switch, rename, deposit, withdraw, export and remove from the wallet menu.
-- **Orders**: limit buys, take profit and stop loss (each a market cap target), and price alerts. Set them in the trade panel (Market / Limit, or TP / SL on the sell side, plus an optional take profit / stop loss on any market buy) or by voice. They show under the trade panel, as lines on the chart and on the Positions page. Take profit and stop loss placed together cancel each other; selling a whole position retires its sell orders. Orders run while Yapper is open in at least one tab (one tab runs them, so they never fire twice).
+- **Orders**: limit buys, take profit and stop loss (each a market cap target), and price alerts. Set them in the trade panel (Market / Limit, or TP / SL on the sell side, plus an optional take profit / stop loss on any market buy) or by voice. They show under the trade panel, as lines on the chart and on the Positions page. Take profit and stop loss placed together cancel each other; selling a whole position (here or in another app) retires its sell orders, and a sell order never sells more than the position it was made for. Orders run while Yapper is open in at least one tab: one tab runs them, and each order keeps its own record of whether its trade was sent, so it can't fire twice (two tabs, a closed tab, a dropped connection). A trade that's sent but slow to confirm shows as "Confirming…" and is checked on the chain, never sent again; one the network dropped is retried.
 - Search by name, ticker or contract address (press `/` anywhere).
 - Toast notifications for each trade step, and a status bar with connection, SOL price and the voice orb.
 
 ## The orb (voice)
 
-Hold the orb or Space and talk, tap once to start and again to send, type in the panel, or turn on hands-free and say "Yapper, ...". Anything that spends or sells shows a confirm card and runs only after "yes" or a tap. It can:
+Hold the orb or Space and talk, tap once to start and again to send, type in the panel, or turn on hands-free and say "Yapper, ...". Anything that spends or sells, cancels orders or sets a high slippage, priority fee or quick buy shows a confirm card and runs only after a plain "yes" (a sentence with more in it doesn't count) or a tap. A card expires after a minute for trades, and if you switch wallets. It can:
 
 - **Trade now**: "buy 0.5 of this", "sell half", "buy 0.5 with stop loss at minus 30 and take profit at 3x".
 - **Orders and alerts**: "buy 0.2 if it dips to 8K", "sell half at 2x", "stop loss at minus 30", "tell me when this hits 50K", "cancel my orders on this".
@@ -29,7 +29,7 @@ Hold the orb or Space and talk, tap once to start and again to send, type in the
 - **Scan**: "find me something on the curve under 20K with volume picking up", "what's hot in final stretch". Results show as cards with Open and quick buy; "open the second one" works.
 - **Safety check**: "is this safe?" gives mint and freeze authority, risky Token-2022 extensions, top 10 and dev holdings, bonding progress, socials. Facts only.
 - **What happened**: "why did it dump?" explains the move from the latest trades (biggest trades, buy vs sell volume).
-- **Settings**: slippage, priority fee, quick buy amount, callouts, hands-free, voice. Also "copy the address" and "share this on X".
+- **Settings**: slippage, priority fee, quick buy amount, callouts, hands-free, voice. Also "copy the address" and "share this on X" (for coins you've opened, been shown, traded or have orders on).
 - **Follow-ups**: "actually make it 0.3", "do the same on the next one".
 
 Voice settings (the sliders next to the orb): spoken replies, natural voice (OpenAI text-to-speech, falls back to the browser's voice), hands-free wake word (the browser's speech recognition; Chrome and Edge), callouts (speaks up when a coin you hold hits 2x/3x/5x/10x/20x your entry or falls to half, graduates, or gets a single sell of 2%+ of the supply) and reading out finished trades.
@@ -75,6 +75,8 @@ Anything else is blocked with a "Blocked for your safety" message and nothing is
 
 The site sends `frame-ancestors 'none'` so no other page can embed the terminal and trick clicks.
 
+**Voice**: the assistant only turns words into a command; the browser checks it and asks before anything happens. Coin names and tickers are made by anyone, so they're stripped of hidden characters and kept short before the assistant sees them, and the coin lists only go along when you ask for a scan. `/api/voice` and `/api/tts` only answer this site's own pages and are rate limited per address.
+
 ## Code layout
 
 - `app/page.js`: routing (`?ca=<mint>`, `?view=pulse`, `?view=positions`), active wallet, balances, coin data, quick buy
@@ -82,8 +84,8 @@ The site sends `frame-ancestors 'none'` so no other page can embed the terminal 
 - `app/_lib/`: formatting, Solana helpers, market data clients, hooks, `pump.js` (live list data: DexScreener refresh, PumpPortal stream, mini chart points), `bonding.js` (pump.fun curve math), `wallets.js` (encrypted wallet store and signing), `guard.js` (trade safety check), `trade.js` (one trade path for the panel, voice and orders)
   - `holdings.js` (balances read from the chain), `history.js` (the wallet's trades from the chain), `fills.js` (position, average entry, PnL), `portfolio.js` (PnL today / this week), `known.js` (coins and accounts remembered per wallet)
   - `orders.js` (orders store and the tab that runs them), `quotes.js` (live market caps), `callouts.js`
-  - `voicebus.js` (orb settings and announcements), `voicecontext.js` (what the orb gathers while you speak), `speech.js` (natural and browser voice), `wake.js` (hands-free wake word)
-- `app/api/voice/command.js`: the command format and the assistant's instructions
+  - `voicebus.js` (orb settings and announcements), `voicecontext.js` (what the orb gathers while you speak), `voicecheck.js` (the orb's own checks: a plain yes, sensible take profit / stop loss), `speech.js` (natural and browser voice), `wake.js` (hands-free wake word)
+- `app/api/voice/command.js`: the command format, the assistant's instructions and what it gets to see; `app/api/_guard.js`: same-site check and rate limit
 - `app/globals.css`: design tokens and all styles
 
 ## Environment variables (Vercel → Project → Settings → Environment Variables)

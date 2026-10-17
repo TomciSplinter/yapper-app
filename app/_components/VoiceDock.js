@@ -15,15 +15,16 @@ import { fetchPair, fetchPairs } from '../_lib/markets';
 import { executeTrade, saveTradeSettings } from '../_lib/trade';
 import { loadHolding } from '../_lib/holdings';
 import { signerKind } from '../_lib/wallets';
-import { cachedFills, summarize } from '../_lib/fills';
-import { holdingsWithPnl } from '../_lib/portfolio';
+import { cachedFills } from '../_lib/fills';
+import { holdingsWithPnl, ownSummary } from '../_lib/portfolio';
 import {
   getOrders,
   isLive,
   createOrder,
   bracketAfterBuy,
+  saveBracketIntent,
+  bracketIntentSent,
   cancelOrder,
-  cancelOrdersWhere,
   resolveTarget,
   alreadyHit,
   describeOrder,
@@ -31,10 +32,11 @@ import {
   DEFAULT_EXPIRY,
 } from '../_lib/orders';
 import { getQuotes } from '../_lib/quotes';
-import { useVoicePrefs, getPrefs, setPrefs, onAnnounce, settingsChanged } from '../_lib/voicebus';
+import { useVoicePrefs, getPrefs, setPrefs, onAnnounce, announce, settingsChanged } from '../_lib/voicebus';
 import { speak as speakOut, stopSpeaking, onSpeaking, unlockAudio, installAudioUnlock } from '../_lib/speech';
 import { createWake, wakeSupported } from '../_lib/wake';
 import { gatherExtras, settleExtras, listInfo } from '../_lib/voicecontext';
+import { isAffirmative, plain, checkLeg, RISKY, PENDING_MS } from '../_lib/voicecheck';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
 import { Icon } from './Icons';
 import { PendingCard, CoinCards, VoiceSettings } from './VoiceParts';
@@ -74,6 +76,8 @@ function pendingText(p) {
   if (!p) return null;
   if (p.kind === 'order') return `${p.label}: ${p.side === 'buy' ? `buy ${p.amountSol} SOL` : `sell ${p.percent}%`} of ${p.symbol} when MC ${p.dir === 'below' ? 'falls to' : 'rises to'} ${usd(p.targetMc)}`;
   if (p.kind === 'sell_many') return `Sell ${p.percent}% of ${p.items.map((i) => i.symbol).join(', ')}`;
+  if (p.kind === 'cancel_orders') return `Cancel ${p.items.length} order${p.items.length > 1 ? 's' : ''}`;
+  if (p.kind === 'setting') return p.text;
   const extra = [p.tp && `take profit ${legText(p.tp)}`, p.sl && `stop loss ${legText(p.sl)}`].filter(Boolean).join(', ');
   return `${p.side === 'buy' ? `Buy ${p.amountSol} SOL of` : `Sell ${p.percent}% of`} ${p.symbol}${extra ? ` with ${extra}` : ''}`;
 }
@@ -110,16 +114,22 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
   const genRef = useRef(0);
   const sendRef = useRef(null);
   const speakingRef = useRef(false);
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
+  const quickBusy = useRef(false);
+  const listenGen = useRef(0);
 
   const setPhase = useCallback((p) => {
     phaseRef.current = p;
     setPhaseRaw(p);
   }, []);
 
+  // a confirm card remembers which wallet and when it was made
   const setPending = useCallback((p) => {
-    pendingRef.current = p;
-    setPendingState(p);
-    wakeRef.current?.expectReply(!!p);
+    const next = p ? { ...p, id: p.id || Math.random().toString(36).slice(2), at: p.at || Date.now(), wallet: p.wallet ?? walletRef.current } : null;
+    pendingRef.current = next;
+    setPendingState(next);
+    wakeRef.current?.expectReply(!!next);
   }, []);
 
   useEffect(() => {
@@ -257,8 +267,10 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
   /* ---------- coins ---------- */
 
   const remember = (coin) => {
-    if (coin) turnRef.current.coin = { mint: coin.mint, symbol: coin.symbol || '' };
-    return coin;
+    if (!coin) return coin;
+    const c = { ...coin, symbol: plain(coin.symbol, 16), name: plain(coin.name, 40) };
+    turnRef.current.coin = { mint: c.mint, symbol: c.symbol || '' };
+    return c;
   };
 
   const resolveCoin = useCallback(
@@ -274,13 +286,18 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         const p = await fetchPair(m).catch(() => null);
         return remember({ mint: m, symbol: p?.baseToken?.symbol || '', name: p?.baseToken?.name || '', imageUrl: p?.info?.imageUrl || null });
       }
-      // a coin from your orders or recent answers, by ticker
-      const o = getOrders().find((x) => norm(x.symbol) && norm(x.symbol) === norm(cmd.coin));
-      if (o) return remember({ mint: o.mint, symbol: o.symbol, name: o.name, imageUrl: o.image });
+      const want = norm(cmd.coin);
+      // a ticker you just talked about, newest first
       for (const t of [...historyRef.current].reverse()) {
-        const hit = [t.coin, ...(t.listed || [])].find((c) => c && norm(c.symbol) && norm(c.symbol) === norm(cmd.coin));
+        const hit = [t.coin, ...(t.listed || [])].find((c) => c && norm(c.symbol) && norm(c.symbol) === want);
         if (hit) return resolveCoin({ coin: hit.mint });
       }
+      // then your own orders, newest first
+      const mine = getOrders()
+        .filter((x) => want && norm(x.symbol) === want && (x.wallet === walletRef.current || x.type === 'alert'))
+        .sort((a, b) => Number(isLive(b)) - Number(isLive(a)) || (b.createdAt || 0) - (a.createdAt || 0));
+      const o = mine[0];
+      if (o) return remember({ mint: o.mint, symbol: o.symbol, name: o.name, imageUrl: o.image });
       const r = await fetch(`/api/search?q=${encodeURIComponent(cmd.coin)}`);
       const j = await r.json().catch(() => ({}));
       const t = j?.results?.[0];
@@ -289,14 +306,29 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     [getContext]
   );
 
+  // coins you've seen with your own eyes: the open coin, ones from earlier
+  // answers (not this one: it could name a coin and copy it in one go), your
+  // orders and coins this wallet traded. Copy and share only use these.
+  const trustedMint = useCallback(
+    (mint) => {
+      if (!mint) return false;
+      if (getContext().coin?.mint === mint) return true;
+      if (historyRef.current.some((t) => t.coin?.mint === mint || (t.listed || []).some((c) => c.mint === mint))) return true;
+      if (getOrders().some((o) => o.mint === mint)) return true;
+      // a coin this wallet has traded
+      return !!(walletRef.current && cachedFills(walletRef.current, mint).length);
+    },
+    [getContext]
+  );
+
   const quoteOf = useCallback(async (mint) => (await getQuotes([mint], solPrice).catch(() => new Map())).get(mint) || null, [solPrice]);
 
-  // your average entry as a market cap, when your trades are known
+  // your average entry as a market cap, when your trades explain what you hold
   const entryMcOf = useCallback(
-    (mint, q) => {
+    (mint, q, held) => {
       if (!wallet || !q?.supply || !solPrice) return null;
-      const s = summarize(cachedFills(wallet, mint), 1, null);
-      return s && s.avgEntry > 0 ? s.avgEntry * solPrice * q.supply : null;
+      const { s, known } = ownSummary(cachedFills(wallet, mint), held, null);
+      return known && s && s.avgEntry > 0 ? s.avgEntry * solPrice * q.supply : null;
     },
     [wallet, solPrice]
   );
@@ -355,16 +387,29 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
             .catch(() => solBal);
           if (amt > fresh) return fail(`Not enough SOL. You have ${fmtSol(fresh)} SOL.`);
         }
-        // take profit above the entry, stop loss below it; anything else is dropped
-        const okTp = (l) => l && l.value !== null && (l.kind === 'multiple' ? l.value > 1 : l.kind === 'percent' ? l.value > 0 : !mc || l.value > mc);
-        const okSl = (l) => l && l.value !== null && (l.kind === 'multiple' ? l.value < 1 : l.kind === 'percent' ? l.value < 0 && l.value > -100 : !mc || l.value < mc);
-        const tp = cmd.take_profit_kind ? { kind: cmd.take_profit_kind, value: cmd.take_profit_value } : null;
-        const sl = cmd.stop_loss_kind ? { kind: cmd.stop_loss_kind, value: cmd.stop_loss_value } : null;
+        // take profit above the price now, stop loss below it; anything else
+        // is left out, and the reply says so
+        const tpIn = cmd.take_profit_kind ? { kind: cmd.take_profit_kind, value: cmd.take_profit_value } : null;
+        const slIn = cmd.stop_loss_kind ? { kind: cmd.stop_loss_kind, value: cmd.stop_loss_value } : null;
+        let mcRef = mc;
+        let supply = null;
+        if ([tpIn, slIn].some((l) => l && (l.kind === 'market_cap' || l.kind === 'price'))) {
+          const q = await quoteOf(coin.mint);
+          mcRef = mcRef || q?.mc || null;
+          supply = q?.supply || null;
+        }
+        const tpc = checkLeg(tpIn, true, mcRef, supply);
+        const slc = checkLeg(slIn, false, mcRef, supply);
+        const left = [tpc.why, slc.why].filter(Boolean);
         const tokens = quoteIsSol && pn > 0 ? amt / pn : solPrice && pu > 0 ? (amt * solPrice) / pu : null;
-        const p = { ...card, amountSol: amt, percent: null, estimate: tokens ? `${fmtAmount(tokens)} ${sym}` : null, tp: okTp(tp) ? tp : null, sl: okSl(sl) ? sl : null };
+        const p = { ...card, amountSol: amt, percent: null, estimate: tokens ? `${fmtAmount(tokens)} ${sym}` : null, tp: tpc.leg, sl: slc.leg };
         setPending(p);
         const brackets = [p.tp && `take profit at ${legText(p.tp)}`, p.sl && `stop loss at ${legText(p.sl)}`].filter(Boolean).join(' and ');
-        return say(pickText(cmd, `Buy ${amt} SOL of ${sym}${brackets ? `, with ${brackets}` : ''}? Say yes or tap Confirm.`), cmd.lang);
+        const leftNote = left.length ? ` I left out what doesn't work: ${left.join('; ')}.` : '';
+        return say(
+          left.length ? `Buy ${amt} SOL of ${sym}${brackets ? `, with ${brackets}` : ''}?${leftNote} Say yes or tap Confirm.` : pickText(cmd, `Buy ${amt} SOL of ${sym}${brackets ? `, with ${brackets}` : ''}? Say yes or tap Confirm.`),
+          left.length ? 'en' : cmd.lang
+        );
       }
 
       const pctAmt = cmd.percent;
@@ -381,7 +426,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       setPending({ ...card, amountSol: null, percent: pctAmt, holding: held, estimate: solOut ? `${fmtSol(solOut)} SOL` : null });
       return say(pickText(cmd, `Sell ${pctAmt}% of your ${sym}? Say yes or tap Confirm.`), cmd.lang);
     },
-    [wallet, connect, fail, say, resolveCoin, getContext, openToken, solPrice, solBal, setPending]
+    [wallet, connect, fail, say, resolveCoin, getContext, openToken, solPrice, solBal, setPending, quoteOf]
   );
 
   const runTrade = useCallback(
@@ -390,6 +435,9 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       setReply(t.side === 'buy' ? `Buying ${t.symbol}.${approve}` : `Selling ${t.percent}% of ${t.symbol}.${approve}`);
       setPhase('reply');
       scheduleClose(6000);
+      const plan = t.side === 'buy' && (t.tp || t.sl) ? { wallet, mint: t.mint, symbol: t.symbol, name: t.name, image: t.imageUrl, tp: t.tp, sl: t.sl, fallbackMc: t.marketCap } : null;
+      // saved before the buy goes out, so a closed tab doesn't lose it
+      const intentId = plan ? saveBracketIntent(plan) : null;
       const res = await executeTrade({
         wallet,
         mint: t.mint,
@@ -400,16 +448,33 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         toast,
         onTraded,
         receiveHint: t.estimate,
+        beforeSend: intentId ? (sig) => bracketIntentSent(intentId, sig) : undefined,
       });
-      if (res.status === 'ok' && t.side === 'buy' && (t.tp || t.sl)) {
-        // measured from the price this buy actually got
-        const made = await bracketAfterBuy(res, {
-          wallet, mint: t.mint, symbol: t.symbol, name: t.name, image: t.imageUrl,
-          tp: t.tp, sl: t.sl, solPrice, fallbackMc: t.marketCap, source: 'voice',
-        }).catch(() => []);
-        if (!made.length) return fail("The buy went through, but I couldn't set take profit and stop loss. Set them in the trade panel.");
-        say(`Set: ${made.map((o) => `${o.label.toLowerCase()} at ${usd(o.targetMc)}`).join(' and ')}. ${made.length > 1 ? 'Whichever hits first cancels the other.' : ''}`.trim());
+      if (!intentId) return;
+      const sent = res.status === 'ok' || res.status === 'pending';
+      if (sent && res.status === 'pending') {
+        announce({ kind: 'order', text: `The ${t.symbol} buy is still confirming. I'll set the take profit and stop loss once it lands.`, mint: t.mint, symbol: t.symbol });
       }
+      // measured from the price this buy actually got
+      const { made, reason } = await bracketAfterBuy(res, { ...plan, solPrice, source: 'voice', intentId }).catch(() => ({ made: [], reason: 'something went wrong' }));
+      if (!sent) return; // the buy itself failed; its toast says why
+      const what = (o) => `${o.label.toLowerCase()} at ${usd(o.targetMc)}`;
+      if (!made.length) {
+        announce({
+          kind: 'order',
+          text: `The buy went through, but I didn't set the take profit and stop loss: ${reason || 'something went wrong'}. Set them in the trade panel.`,
+          mint: t.mint,
+          symbol: t.symbol,
+          toast: { kind: 'error', title: 'Take profit / stop loss not set', detail: reason || 'Set them in the trade panel.' },
+        });
+        return;
+      }
+      announce({
+        kind: 'order',
+        text: `Set: ${made.map(what).join(' and ')}.${made.length > 1 ? ' Whichever hits first cancels the other.' : ''}${reason ? ` Not set: ${reason}.` : ''}`,
+        mint: t.mint,
+        symbol: t.symbol,
+      });
     },
     [wallet, toast, onTraded, setPhase, scheduleClose, solPrice, say, fail]
   );
@@ -434,6 +499,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
 
       let amountSol = null;
       let percent = null;
+      let holding = null;
       let base = q.mc;
       let note = null;
       if (side === 'buy') {
@@ -448,15 +514,14 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
           if (amountSol > fresh) return fail(`Not enough SOL for that. You have ${fmtSol(fresh)} SOL.`);
         }
       } else {
-        let held = 0;
         try {
-          held = (await loadHolding(wallet, coin.mint)).amount;
+          holding = (await loadHolding(wallet, coin.mint)).amount;
         } catch {
           return fail("I couldn't read your balance right now. Try again in a moment.");
         }
-        if (!(held > 0)) return fail(`You don't hold any ${sym}.`);
+        if (!(holding > 0)) return fail(`You don't hold any ${sym}.`);
         percent = cmd.percent || 100;
-        const entry = entryMcOf(coin.mint, q);
+        const entry = entryMcOf(coin.mint, q, holding);
         if (entry) base = entry;
         else if (cmd.trigger_kind === 'multiple' || cmd.trigger_kind === 'percent') note = "I don't know your entry for this coin, so it's measured from the current market cap.";
       }
@@ -471,7 +536,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       const expiresInMs = cmd.expires_minutes ? cmd.expires_minutes * 60000 : DEFAULT_EXPIRY[side];
       setPending({
         kind: 'order', side, mint: coin.mint, symbol: sym, name: coin.name || q.name || '', imageUrl: coin.imageUrl || q.image || null,
-        amountSol, percent, targetMc: r.targetMc, dir: r.dir, mcNow: q.mc, expiresInMs, label, note,
+        amountSol, percent, holding, targetMc: r.targetMc, dir: r.dir, mcNow: q.mc, expiresInMs, label, note,
       });
       const what = side === 'buy' ? `buy ${amountSol} SOL of ${sym}` : `sell ${percent === 100 ? 'all' : `${percent}%`} of your ${sym}`;
       return say(pickText(cmd, `${label}: ${what} when the market cap ${r.dir === 'below' ? 'falls to' : 'rises to'} ${usd(r.targetMc)}. It's ${usd(q.mc)} now. Say yes or tap Confirm.`), cmd.lang);
@@ -485,7 +550,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         createOrder({
           wallet, mint: t.mint, symbol: t.symbol, name: t.name, image: t.imageUrl, type: t.side,
           amountSol: t.amountSol, percent: t.percent, targetMc: t.targetMc, dir: t.dir, label: t.label,
-          createdMc: t.mcNow, expiresInMs: t.expiresInMs, source: 'voice',
+          createdMc: t.mcNow, heldAtCreate: t.holding, expiresInMs: t.expiresInMs, source: 'voice',
         });
       } catch (e) {
         return fail(String(e?.message || "Couldn't place that order."));
@@ -520,21 +585,42 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     [wallet, say, fail, resolveCoin, quoteOf]
   );
 
+  // which orders, then a confirm card (cancelling is never silent)
   const cancelOrdersCmd = useCallback(
     async (cmd) => {
-      let n = 0;
+      const open = getOrders().filter((o) => isLive(o) && !o.sig && o.status !== 'unconfirmed' && (o.type === 'alert' || o.wallet === walletRef.current));
+      let list;
       if (cmd.order_ids?.length) {
-        for (const id of cmd.order_ids) if (cancelOrder(id)) n++;
+        const ids = new Set(cmd.order_ids);
+        list = open.filter((o) => ids.has(o.id));
       } else if (cmd.coin_is_current || cmd.coin) {
         const coin = await resolveCoin(cmd);
         if (!coin) return fail("I couldn't tell which coin's orders to cancel.");
-        n = cancelOrdersWhere((o) => o.mint === coin.mint);
+        list = open.filter((o) => o.mint === coin.mint);
       } else {
-        n = cancelOrdersWhere(() => true);
+        list = open;
       }
-      return say(n ? `Cancelled ${n} order${n > 1 ? 's' : ''}.` : 'There were no open orders to cancel.');
+      if (!list.length) return say('There are no open orders to cancel.');
+      const items = list.slice(0, 20).map((o) => ({ id: o.id, mint: o.mint, symbol: o.symbol, label: orderLabel(o), text: describeOrder(o) }));
+      setPending({ kind: 'cancel_orders', items });
+      const what = items.length === 1 ? items[0].text.replace(/^./, (c) => c.toLowerCase()) : `${items.length} orders`;
+      return say(`Cancel ${what}? Say yes or tap Confirm.`);
     },
-    [resolveCoin, say, fail]
+    [resolveCoin, say, fail, setPending]
+  );
+
+  const runCancelOrders = useCallback(
+    (t) => {
+      let n = 0;
+      for (const it of t.items) if (cancelOrder(it.id)) n++;
+      const missed = t.items.length - n;
+      return say(
+        n
+          ? `Cancelled ${n} order${n > 1 ? 's' : ''}.${missed ? ` ${missed} had already run or been sent.` : ''}`
+          : 'Those orders had already run or been sent, so there was nothing to cancel.'
+      );
+    },
+    [say]
   );
 
   /* ---------- selling several coins ---------- */
@@ -552,7 +638,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         return fail("I couldn't read your positions right now. Try again in a moment.");
       }
       const f = cmd.filter || 'all';
-      const th = cmd.filter_pct;
+      const th = Math.abs(Number(cmd.filter_pct) || 0) || null;
       let picked;
       let skipped = 0;
       if (f === 'all') {
@@ -573,13 +659,15 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         );
       }
       const percent = cmd.percent || 100;
-      const items = picked.map((r) => ({ mint: r.mint, symbol: r.symbol, name: r.name, imageUrl: r.imageUrl, amount: r.amount, valueUsd: r.value, fromEntryPct: r.fromEntryPct }));
-      setPending({ kind: 'sell_many', percent, items });
+      const items = picked.map((r) => ({ mint: r.mint, symbol: plain(r.symbol, 16), name: plain(r.name, 40), imageUrl: r.imageUrl, amount: r.amount, valueUsd: r.value, fromEntryPct: r.fromEntryPct }));
+      // the rule is read back, so a misheard "down 15%" can't pass as "down 50%"
+      const rule = f === 'all' ? null : `${f === 'losing' ? 'down' : 'up'}${th ? ` more than ${th}%` : ''} from your entry`;
+      setPending({ kind: 'sell_many', percent, items, rule });
       const total = items.reduce((s, it) => s + (it.valueUsd || 0), 0) * (percent / 100);
       const names = items.slice(0, 4).map((i) => i.symbol).join(', ') + (items.length > 4 ? ` and ${items.length - 4} more` : '');
+      const n = `${items.length} coin${items.length > 1 ? 's' : ''}`;
       return say(
-        pickText(cmd, `Sell ${percent === 100 ? 'all' : `${percent}%`} of ${items.length} coin${items.length > 1 ? 's' : ''}: ${names}, worth about ${usd(total)}?${skipNote} Say yes or tap Confirm.`),
-        cmd.lang
+        `Sell ${percent === 100 ? 'all' : `${percent}%`} of ${n}${rule ? ` that ${items.length > 1 ? 'are' : 'is'} ${rule}` : ''}: ${names}, worth about ${usd(total)}?${skipNote} Say yes or tap Confirm.`
       );
     },
     [wallet, connect, fail, say, solPrice, setPending]
@@ -603,23 +691,32 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
 
   /* ---------- settings, copy, share ---------- */
 
+  // confirmed: from the confirm card (risky values need one)
   const applySetting = useCallback(
-    (cmd) => {
+    (cmd, { confirmed = false } = {}) => {
       const v = cmd.setting_value;
       const on = cmd.setting_on;
+      const risky = RISKY[cmd.setting] !== undefined && v > RISKY[cmd.setting] && !confirmed;
+      const ask = (text) => {
+        setPending({ kind: 'setting', setting: cmd.setting, value: v, text });
+        return say(`${text}? That's on the high side. Say yes or tap Confirm.`);
+      };
       switch (cmd.setting) {
         case 'slippage':
           if (!(v >= 0.5 && v <= 50)) return fail('Slippage can be between 0.5% and 50%.');
+          if (risky) return ask(`Set slippage to ${v}%`);
           saveTradeSettings({ slippage: String(v) });
           settingsChanged({ slippage: String(v) });
           return say(`Slippage set to ${v}%.`);
         case 'priority_fee':
           if (!(v >= 0 && v <= 0.01)) return fail('The priority fee can be between 0 and 0.01 SOL.');
+          if (risky) return ask(`Set the priority fee to ${v} SOL`);
           saveTradeSettings({ prioFee: String(v) });
           settingsChanged({ prioFee: String(v) });
           return say(`Priority fee set to ${v} SOL.`);
         case 'quick_buy':
           if (!(v > 0 && v <= 100)) return fail('Quick buy can be up to 100 SOL.');
+          if (risky) return ask(`Set quick buy to ${v} SOL`);
           try {
             localStorage.setItem(QB_KEY, String(v));
           } catch {}
@@ -654,13 +751,15 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
           return say(cmd.reply || 'I can change slippage, priority fee, quick buy, callouts, hands-free mode and the voice.');
       }
     },
-    [say, fail]
+    [say, fail, setPending]
   );
 
   const copyAddress = useCallback(
     async (cmd) => {
       const coin = await resolveCoin(cmd);
       if (!coin) return fail('Open a coin first, or say which coin you mean.');
+      // only coins you've seen here: a lookalike from a search could be a scam
+      if (!trustedMint(coin.mint)) return say(`Open ${coin.symbol || 'the coin'} first and check it's the right one, then ask me to copy its address.`);
       const sym = coin.symbol || 'the coin';
       try {
         await navigator.clipboard.writeText(coin.mint);
@@ -670,13 +769,14 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         return say(`Tap Copy to copy ${sym}'s contract address.`);
       }
     },
-    [resolveCoin, say, fail]
+    [resolveCoin, say, fail, trustedMint]
   );
 
   const shareCoin = useCallback(
     async (cmd) => {
       const coin = await resolveCoin(cmd);
       if (!coin) return fail('Open a coin first, or say which coin you mean.');
+      if (!trustedMint(coin.mint)) return say(`Open ${coin.symbol || 'the coin'} first and check it's the right one, then ask me to share it.`);
       const sym = coin.symbol || 'this coin';
       const link = `${window.location.origin}/?ca=${coin.mint}`;
       const text = `$${sym} on Yapper`;
@@ -684,7 +784,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       setExtra({ type: 'share', url, symbol: sym });
       return say(`Ready to share ${sym}. Tap Share on X.`);
     },
-    [resolveCoin, say, fail]
+    [resolveCoin, say, fail, trustedMint]
   );
 
   /* ---------- confirm / cancel ---------- */
@@ -693,10 +793,15 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     const t = pendingRef.current;
     if (!t) return;
     setPending(null);
+    // stale or for another wallet: ask again rather than act on old numbers
+    if (Date.now() - t.at > (PENDING_MS[t.kind] || 60000)) return say("That was a while ago, so I didn't do it. Say it again and I'll check the latest numbers.");
+    if (['trade', 'order', 'sell_many'].includes(t.kind) && t.wallet !== walletRef.current) return fail('Your wallet changed since I asked, so I stopped. Say it again.');
     if (t.kind === 'order') return placeOrder(t);
     if (t.kind === 'sell_many') return runSellMany(t);
+    if (t.kind === 'cancel_orders') return runCancelOrders(t);
+    if (t.kind === 'setting') return applySetting({ setting: t.setting, setting_value: t.value }, { confirmed: true });
     return runTrade(t);
-  }, [setPending, placeOrder, runSellMany, runTrade]);
+  }, [setPending, placeOrder, runSellMany, runCancelOrders, applySetting, runTrade, say, fail]);
 
   const cancelPending = useCallback(() => {
     setPending(null);
@@ -713,9 +818,9 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       switch (cmd.action) {
         case 'confirm':
           if (!pendingRef.current) return say(cmd.reply || 'There is nothing to confirm.', cmd.reply ? cmd.lang : 'en');
-          // a yes is short; a long sentence read as "confirm" is more likely a
-          // misunderstanding (or text in a coin name steering the assistant)
-          if (said.trim().split(/\s+/).length > 7) return say('To go ahead, say yes or tap Confirm.');
+          // a yes is a few plain words; anything else read as "confirm" is more
+          // likely a misunderstanding (or text in a coin name steering the assistant)
+          if (!isAffirmative(said)) return say('To go ahead, say yes or tap Confirm.');
           return confirmPending();
         case 'cancel':
           if (pendingRef.current) return cancelPending();
@@ -909,12 +1014,18 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     setView('main');
     setOpen(true);
     setPhase('starting');
+    const gen = ++listenGen.current;
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch {
       wakeRef.current?.resume();
       return fail('Microphone access is blocked. Allow the microphone for this site, or type your command below.');
+    }
+    // closed while the microphone was starting
+    if (gen !== listenGen.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
     }
     const mime = pickMime();
     let recorder;
@@ -954,7 +1065,10 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       tick();
     } catch {}
 
-    rec.timeout = setTimeout(() => stopAndSend(), MAX_MS);
+    // only this recording: a timer left from an earlier one must not stop a new one
+    rec.timeout = setTimeout(() => {
+      if (recRef.current === rec) stopAndSend();
+    }, MAX_MS);
     recRef.current = rec;
     setPhase('listening');
     if (stopAfterStart.current) {
@@ -1014,14 +1128,30 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     };
   }, [pressDown, pressUp]);
 
+  // drop a recording without sending it
+  const discardRecording = () => {
+    const r = recRef.current;
+    if (!r) return false;
+    recRef.current = null;
+    clearTimeout(r.timeout);
+    cancelAnimationFrame(r.raf);
+    r.recorder.onstop = null;
+    try {
+      r.recorder.stop();
+    } catch {}
+    r.stream.getTracks().forEach((t) => t.stop());
+    try {
+      r.ctx?.close();
+    } catch {}
+    orbRef.current?.style.setProperty('--lvl', '0');
+    return true;
+  };
+
   // release the mic if the page goes away mid-recording
   useEffect(
     () => () => {
-      const r = recRef.current;
-      if (r) {
-        r.stream.getTracks().forEach((t) => t.stop());
-        cancelAnimationFrame(r.raf);
-      }
+      listenGen.current++;
+      discardRecording();
       clearTimeout(closeTimer.current);
       clearTimeout(wakeTimer.current);
     },
@@ -1029,17 +1159,9 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
   );
 
   const close = () => {
-    if (recRef.current) {
-      const r = recRef.current;
-      recRef.current = null;
-      r.recorder.onstop = null;
-      try {
-        r.recorder.stop();
-      } catch {}
-      r.stream.getTracks().forEach((t) => t.stop());
-      cancelAnimationFrame(r.raf);
-      wakeRef.current?.resume();
-    }
+    listenGen.current++; // a microphone still starting is dropped
+    stopAfterStart.current = false;
+    if (discardRecording() || phaseRef.current === 'starting') wakeRef.current?.resume();
     setPending(null);
     setOpen(false);
     setPhase('idle');
@@ -1186,7 +1308,20 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
                 cards={cards}
                 quickAmount={quickAmount}
                 onOpen={(m) => openToken(m)}
-                onBuy={onQuickBuy ? (c) => onQuickBuy({ mint: c.mint, symbol: c.symbol, name: c.name }, quickAmount) : null}
+                onBuy={
+                  onQuickBuy
+                    ? (c) => {
+                        // one at a time: a double tap must not buy twice
+                        if (quickBusy.current) return;
+                        quickBusy.current = true;
+                        Promise.resolve(onQuickBuy({ mint: c.mint, symbol: c.symbol, name: c.name }, quickAmount))
+                          .catch(() => {})
+                          .finally(() => {
+                            quickBusy.current = false;
+                          });
+                      }
+                    : null
+                }
               />
 
               {extra?.type === 'copy' && (

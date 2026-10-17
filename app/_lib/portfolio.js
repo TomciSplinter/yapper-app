@@ -16,6 +16,19 @@ const r4 = (v) => (v === null || v === undefined || !Number.isFinite(v) ? null :
 
 const names = new Map(); // mint -> symbol
 
+// The summary over the coins you bought. Coins sent to you have no entry, so
+// when the known trades don't explain (nearly) all of what you hold, PnL is
+// counted on the bought part only. own: how many of the held coins that is.
+export function ownSummary(fills, held, priceSol) {
+  const h = Number(held) > 0 ? Number(held) : 0;
+  let s = summarize(fills, h, priceSol);
+  if (!s) return { s: null, own: 0, known: false };
+  const net = Math.max(0, s.bought - s.sold);
+  const known = h === 0 || net >= 0.95 * h;
+  if (!known) s = summarize(fills, Math.min(h, net), priceSol);
+  return { s, own: known ? h : Math.min(h, net), known };
+}
+
 export async function portfolioSnapshot(wallet, solPrice, { positions } = {}) {
   if (!wallet) return null;
   await scanWallet(wallet).catch(() => []);
@@ -45,9 +58,9 @@ export async function portfolioSnapshot(wallet, solPrice, { positions } = {}) {
   for (const [mint, fills] of byMint) {
     const h = held.get(mint);
     const priceSol = h ? h.priceNative || (solPrice && h.priceUsd ? h.priceUsd / solPrice : null) : null;
-    const s = summarize(fills, h?.amount || 0, priceSol);
+    const { s, own } = ownSummary(fills, h?.amount || 0, priceSol);
     if (!s) continue; // no buys we know of
-    coins.push({ mint, symbol: names.get(mint) || `${mint.slice(0, 4)}…`, s, fills });
+    coins.push({ mint, symbol: names.get(mint) || `${mint.slice(0, 4)}…`, s, fills, held: own, priceSol });
   }
 
   const windowStats = (t0) => {
@@ -61,9 +74,15 @@ export async function portfolioSnapshot(wallet, solPrice, { positions } = {}) {
     for (const c of coins) {
       const inWin = c.fills.filter((f) => f.time >= t0 && (f.side === 'buy' || f.side === 'sell'));
       if (!inWin.length) continue;
-      const rz = c.s.sells.filter((x) => x.time >= t0).reduce((a, x) => a + x.realized, 0);
-      const boughtIn = inWin.some((f) => f.side === 'buy');
-      const ur = boughtIn && c.s.unrealized !== null ? c.s.unrealized : 0;
+      const winSells = c.s.sells.filter((x) => x.time >= t0);
+      const rz = winSells.reduce((a, x) => a + x.realized, 0);
+      // open profit only on what was bought in the window (and is still held),
+      // against what those buys cost: older bags don't count toward "today"
+      const winBuys = inWin.filter((f) => f.side === 'buy');
+      const bw = winBuys.reduce((a, f) => a + f.tokens, 0);
+      const cw = winBuys.reduce((a, f) => a + -f.sol, 0);
+      const keep = Math.min(c.held, bw);
+      const ur = keep > 0 && bw > 0 && c.priceSol > 0 ? keep * (c.priceSol - cw / bw) : 0;
       realized += rz;
       unrealized += ur;
       for (const f of inWin) {
@@ -75,7 +94,9 @@ export async function portfolioSnapshot(wallet, solPrice, { positions } = {}) {
           received += f.sol;
         }
       }
-      list.push({ symbol: c.symbol, mint: c.mint, pnl_sol: r4(rz + ur), pnl_pct: c.s.boughtSol > 0 ? Math.round(((rz + ur) / c.s.boughtSol) * 1000) / 10 : null });
+      // percent of the SOL put to work: the window's buys, or the cost of what was sold
+      const base = cw > 0 ? cw : winSells.reduce((a, x) => a + (x.sol - x.realized), 0);
+      list.push({ symbol: c.symbol, mint: c.mint, pnl_sol: r4(rz + ur), pnl_pct: base > 0 ? Math.round(((rz + ur) / base) * 1000) / 10 : null });
     }
     list.sort((a, b) => b.pnl_sol - a.pnl_sol);
     const pnl = realized + unrealized;
@@ -133,9 +154,10 @@ export async function holdingsWithPnl(wallet, solPrice) {
   return pos.map((p) => {
     const mine = fills.filter((f) => f.mint === p.mint);
     const priceSol = p.priceNative || (solPrice && p.priceUsd ? p.priceUsd / solPrice : null);
-    const s = summarize(mine, p.amount, priceSol);
-    // how far the price is from your average entry, in percent
-    const fromEntryPct = s && s.avgEntry > 0 && priceSol > 0 ? (priceSol / s.avgEntry - 1) * 100 : null;
-    return { ...p, pnlPct: s?.pnlPct ?? null, pnlSol: s?.pnl ?? null, fromEntryPct, known: !!s };
+    const { s, known } = ownSummary(mine, p.amount, priceSol);
+    // how far the price is from your average entry, in percent (only when the
+    // entry covers what you hold)
+    const fromEntryPct = known && s && s.avgEntry > 0 && priceSol > 0 ? (priceSol / s.avgEntry - 1) * 100 : null;
+    return { ...p, pnlPct: s?.pnlPct ?? null, pnlSol: s?.pnl ?? null, fromEntryPct, known: !!s && known };
   });
 }
