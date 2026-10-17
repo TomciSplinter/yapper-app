@@ -2186,6 +2186,18 @@ p {
   color: var(--down);
 }
 /* settings */
+.vp-heard {
+  margin: -4px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--raise);
+  color: var(--ink-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.vp-heard q {
+  color: var(--ink);
+}
 .vp-settings {
   display: grid;
   gap: 2px;

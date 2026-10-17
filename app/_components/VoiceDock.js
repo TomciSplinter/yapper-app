@@ -128,6 +128,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
   const [speaking, setSpeaking] = useState(false);
   const [wakeState, setWakeState] = useState('off');
   const [wakeOk, setWakeOk] = useState(false);
+  const [heard, setHeard] = useState(null); // hands-free: the last thing the browser heard
 
   const orbRef = useRef(null);
   const recRef = useRef(null);
@@ -208,6 +209,8 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       setOpen(true);
       talk(text, lang);
       scheduleClose(pendingRef.current ? 0 : 12000);
+      // hands-free: a question ("how much?") can be answered without "Yapper"
+      if (!pendingRef.current && /\?\s*$/.test(text || '')) wakeRef.current?.expectAnswer?.();
     },
     [setPhase, talk, scheduleClose]
   );
@@ -442,7 +445,10 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
 
       if (side === 'buy') {
         let amt = cmd.amount_sol ?? (cmd.amount_usd && solPrice ? cmd.amount_usd / solPrice : null);
-        if (!amt) return say(`How much SOL should I spend on ${sym}? For example, buy 0.5 SOL.`);
+        // "buy xyz" with no amount: your quick buy amount (you still confirm)
+        const quick = !amt;
+        if (quick) amt = Number(readQuickBuy());
+        if (!(amt > 0)) return say(`How much SOL should I spend on ${sym}? For example, buy 0.5 SOL.`);
         amt = r4(amt);
         if (solBal !== null && amt > solBal) {
           // the shown balance can lag a fresh deposit, so ask the chain before saying no
@@ -470,10 +476,9 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         setPending(p);
         const brackets = [p.tp && `take profit at ${legText(p.tp)}`, p.sl && `stop loss at ${legText(p.sl)}`].filter(Boolean).join(' and ');
         const leftNote = left.length ? ` I left out what doesn't work: ${left.join('; ')}.` : '';
-        return say(
-          left.length ? `Buy ${amt} SOL of ${sym}${brackets ? `, with ${brackets}` : ''}?${leftNote} Say yes or tap Confirm.` : pickText(cmd, `Buy ${amt} SOL of ${sym}${brackets ? `, with ${brackets}` : ''}? Say yes or tap Confirm.`),
-          left.length ? 'en' : cmd.lang
-        );
+        const what = `Buy ${amt} SOL of ${sym}${quick ? ', your quick buy amount' : ''}${brackets ? `, with ${brackets}` : ''}?`;
+        const own = left.length || quick;
+        return say(own ? `${what}${leftNote} Say yes or tap Confirm.` : pickText(cmd, `${what} Say yes or tap Confirm.`), own ? 'en' : cmd.lang);
       }
 
       const pctAmt = cmd.percent;
@@ -1007,6 +1012,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     const w = createWake({
       lang: 'en-US',
       onState: setWakeState,
+      onHeard: (text, used) => setHeard({ text: plain(text, 120), used, at: Date.now() }),
       onWake: () => {
         if (['thinking', 'listening', 'starting'].includes(phaseRef.current)) return;
         stopSpeaking();
@@ -1378,7 +1384,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
           </div>
 
           {view === 'settings' ? (
-            <VoiceSettings prefs={prefs} onChange={(patch) => setPrefs(patch)} wakeState={wakeState} wakeOk={wakeOk} />
+            <VoiceSettings prefs={prefs} onChange={(patch) => setPrefs(patch)} wakeState={wakeState} wakeOk={wakeOk} heard={heard} />
           ) : (
             <>
               {transcript && <p className="vp-you">“{transcript}”</p>}

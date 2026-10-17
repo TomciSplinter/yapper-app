@@ -232,13 +232,19 @@ function Toggle({ id, label, sub, checked, onChange, disabled }) {
   );
 }
 
-export function VoiceSettings({ prefs, onChange, wakeState, wakeOk }) {
+const iPhone = () => typeof navigator !== 'undefined' && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+export function VoiceSettings({ prefs, onChange, wakeState, wakeOk, heard }) {
   const wakeSub = !wakeOk
     ? "This browser can't listen for a wake word. Chrome and Edge can."
     : wakeState === 'denied'
-    ? 'Microphone access is blocked for this site.'
+    ? 'Microphone access is blocked for this site. Allow it in the browser’s site settings.'
     : wakeState === 'error'
-    ? "The browser's speech service isn't responding. Retrying."
+    ? iPhone()
+      ? 'Safari stopped listening. Tap anywhere on the page to start it again.'
+      : "The browser's speech service isn't responding. Retrying."
+    : iPhone()
+    ? 'Say "Yapper, buy 0.1 SOL of this". Safari only listens while Yapper is open on screen, and may stop now and then: tap the page to wake it.'
     : 'Say "Yapper, buy 0.1 SOL of this". Your browser’s speech service listens while this is on.';
   return (
     <div className="vp-settings">
@@ -252,6 +258,19 @@ export function VoiceSettings({ prefs, onChange, wakeState, wakeOk }) {
         onChange={(v) => onChange({ natural: v })}
       />
       <Toggle id="vs-wake" label='Hands-free: "Yapper"' sub={wakeSub} checked={prefs.wake && wakeOk} disabled={!wakeOk} onChange={(v) => onChange({ wake: v })} />
+      {prefs.wake && wakeOk && (
+        <p className="vp-heard" aria-live="polite">
+          {heard ? (
+            <>
+              Last heard: <q>{heard.text}</q> {heard.used ? null : <span className="muted">(no “Yapper”, ignored)</span>}
+            </>
+          ) : wakeState === 'listening' ? (
+            'Listening for “Yapper”…'
+          ) : (
+            'Not listening right now.'
+          )}
+        </p>
+      )}
       <Toggle
         id="vs-callouts"
         label="Callouts"
