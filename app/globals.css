@@ -322,9 +322,11 @@ p {
 
 /* ---------- top bar ---------- */
 
+/* logo, pages, wallet and search stay in view when the page scrolls */
 .tb {
-  position: relative;
-  z-index: 20;
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 20px;
@@ -3675,6 +3677,7 @@ p {
     align-content: flex-start;
     gap: 8px 12px;
     padding: 8px var(--gutter);
+    padding-top: max(8px, env(safe-area-inset-top));
   }
   .sb::before {
     width: 180px;
