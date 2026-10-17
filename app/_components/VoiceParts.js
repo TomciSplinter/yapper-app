@@ -3,7 +3,7 @@
 // Pieces of the voice panel: the confirm cards, the coin cards a scan
 // returns, and the orb's settings.
 
-import { amount as fmtAmount, usd, pct, tone } from '../_lib/format';
+import { amount as fmtAmount, usd, pct, tone, age } from '../_lib/format';
 import { Icon, TokenImage } from './Icons';
 
 function Coin({ imageUrl, symbol, name, mint, marketCap }) {
@@ -205,6 +205,7 @@ export function CoinCards({ cards, onOpen, onBuy, quickAmount }) {
             <span className="vp-cc-sub">
               {c.mc ? usd(c.mc) : '—'}
               {c.chg !== null && c.chg !== undefined && <span className={tone(c.chg)}> {pct(c.chg)}</span>}
+              {c.createdAt ? <span className="muted"> · {age(c.createdAt)}</span> : null}
             </span>
           </button>
           {onBuy && (

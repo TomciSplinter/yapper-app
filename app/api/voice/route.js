@@ -18,7 +18,7 @@ const MAX_CONTEXT = 60000;
 // light per-instance rate limit so nobody can burn the OpenAI key
 const limited = makeLimiter(30);
 
-async function transcribe(key, audio, hint) {
+async function transcribe(key, audio, coins) {
   const models = [process.env.OPENAI_TRANSCRIBE_MODEL, 'gpt-4o-mini-transcribe', 'whisper-1'].filter(Boolean);
   const type = audio.type || 'audio/webm';
   const ext = /mp4|m4a|aac/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : /wav/.test(type) ? 'wav' : /mpeg|mp3/.test(type) ? 'mp3' : 'webm';
@@ -29,7 +29,7 @@ async function transcribe(key, audio, hint) {
     fd.append('model', model);
     fd.append(
       'prompt',
-      `Solana memecoin trading commands. Words like SOL, buy, sell, ape, dump, market cap, take profit, stop loss, limit order, pump.fun, PumpSwap, ticker, Yapper.${hint ? ` Coin on screen: ${hint}.` : ''}`
+      `Solana memecoin trading commands. Words like SOL, buy, sell, ape, dump, market cap, take profit, stop loss, limit order, pump.fun, PumpSwap, ticker, Yapper.${coins.length ? ` Coins on screen: ${coins.join(', ')}.` : ''}`
     );
     const r = await fetch(`${OPENAI}/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd });
     const j = await r.json().catch(() => ({}));
@@ -85,6 +85,14 @@ function fit(context) {
   return size(c) <= MAX_CONTEXT ? c : {};
 }
 
+// tickers the user can see, so the transcription spells them right
+function screenNames(context) {
+  const names = [context?.coin?.symbol, ...(Array.isArray(context?.screen?.tickers) ? context.screen.tickers : [])]
+    .map((t) => plainText(t, 16))
+    .filter(Boolean);
+  return [...new Set(names)].slice(0, 25);
+}
+
 function cleanHistory(h) {
   if (!Array.isArray(h)) return [];
   return h.slice(-6).map((t) => ({
@@ -129,7 +137,7 @@ export async function POST(req) {
     if (!transcript && audio && typeof audio === 'object') {
       if (audio.size > MAX_AUDIO) return Response.json({ error: 'That recording is too long. Keep it under 15 seconds.' }, { status: 413 });
       if (audio.size < 1200) return Response.json({ error: "I didn't catch that. Hold the orb a little longer while you talk." }, { status: 400 });
-      transcript = await transcribe(key, audio, context?.coin?.symbol);
+      transcript = await transcribe(key, audio, screenNames(context));
     }
     if (!transcript) return Response.json({ error: "I didn't catch that. Try again." }, { status: 400 });
     // coin lists (third-party names) only go to the assistant for a scan

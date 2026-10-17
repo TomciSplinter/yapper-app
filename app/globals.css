@@ -436,15 +436,56 @@ p {
   left: 0;
   right: 0;
   z-index: 40;
-  max-height: min(70vh, 520px);
-  overflow-y: auto;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 560px);
+  overflow: hidden;
   background: var(--pane);
   border: 1px solid var(--rule-2);
   border-radius: var(--r-lg);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65);
+}
+/* the order switch: best match, newest, biggest */
+.sr-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.sr-sort {
+  flex: none;
+}
+.sr-hint {
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sr-list {
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+.sr-list > li {
+  transition: opacity 120ms;
+}
+/* new results on the way (after typing or switching the order) */
+.sr-list[aria-busy='true'] > li:not(.sr-empty) {
+  opacity: 0.55;
+}
+.sr-age.new {
+  color: var(--mint);
+}
+@media (max-width: 560px) {
+  .sr-hint {
+    display: none;
+  }
 }
 .sr-item {
   width: 100%;

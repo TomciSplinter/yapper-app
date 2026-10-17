@@ -16,6 +16,7 @@ import { FINAL_STRETCH } from '../_lib/bonding';
 import { loadLists, useLive, useTokenInfo, liveRow, usePumpFeed, rowFromCreate, coinMeta, useQuickBuy } from '../_lib/pump';
 import { Icon } from './Icons';
 import { CoinAvatar, Socials, CopyCA, TokenStats, QuickBuyButton, QuickBuyInput } from './CoinBits';
+import { useOnScreen } from '../_lib/screen';
 
 const COLS = [
   { id: 'new', title: 'New pairs', empty: 'Waiting for new coins.' },
@@ -208,6 +209,11 @@ export default function Pulse({ onOpenToken, onQuickBuy, solPrice }) {
     return out;
     // `now` only matters for the 3h window and fresh migrations; a 1s tick is fine
   }, [known, patches, info, queries, now]);
+
+  // voice looks at these columns before searching anywhere else
+  useOnScreen('pulse-new', 'New pairs', columns.new);
+  useOnScreen('pulse-final', 'Final stretch', columns.final);
+  useOnScreen('pulse-migrated', 'Migrated', columns.migrated);
 
   // keep every visible card live (DexScreener takes 30 per call)
   const liveKey = [...columns.new.slice(0, 30), ...columns.final.slice(0, 30), ...columns.migrated.slice(0, 30)].map((r) => r.mint).join(',');

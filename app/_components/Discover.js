@@ -14,6 +14,7 @@ import { loadLists, useLive, useTokenInfo, liveRow, sparkPoints, useQuickBuy } f
 import { Icon, TableSkeleton } from './Icons';
 import Empty from './Empty';
 import { Sparkline, CoinAvatar, Socials, CopyCA, TokenStats, QuickBuyButton, QuickBuyInput } from './CoinBits';
+import { useOnScreen } from '../_lib/screen';
 
 const TABS = [
   { id: 'trending', label: 'Trending', list: 'curve', sort: 'vol', sub: 'Pump.fun coins still on the bonding curve, trading right now' },
@@ -224,6 +225,9 @@ export default function Discover({ onOpenToken, onQuickBuy }) {
     const merged = new Map((base || []).map((r) => [r.mint, liveRow(r, patches.get(r.mint), info[r.mint])]));
     rows = frozen.current.map((m) => byMint.get(m) || merged.get(m)).filter(Boolean);
   }
+
+  // voice looks at the rows you see before searching anywhere else
+  useOnScreen('discover', def.label, rows);
 
   const setSort = (key) => {
     setSorts((prev) => {

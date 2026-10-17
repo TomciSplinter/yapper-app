@@ -2,19 +2,48 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { extractMint } from '../_lib/chain';
-import { usd, pct, tone, short, sol, dexLabel } from '../_lib/format';
+import { usd, short, sol, age, count } from '../_lib/format';
 import { useWallets, activeWallet, setActive, openWalletModal, lock } from '../_lib/wallets';
 import { Icon, TokenImage } from './Icons';
+
+// how search results are ordered; the choice is remembered in this browser
+const SORTS = [
+  { id: 'best', label: 'Best match', hint: 'New coins with holders and trading first' },
+  { id: 'new', label: 'Newest', hint: 'Most recent launches first' },
+  { id: 'mc', label: 'Biggest', hint: 'Highest market cap first' },
+];
+const SORT_KEY = 'yapper:search-sort';
+
+function readSort() {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return SORTS.some((s) => s.id === v) ? v : 'best';
+  } catch {
+    return 'best';
+  }
+}
 
 export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, onConnect, onDisconnect }) {
   const walletsReady = useWallets().ready;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [sort, setSortState] = useState('best');
   const seq = useRef(0);
   const inputRef = useRef(null);
+  const sortRefs = useRef({});
+
+  useEffect(() => setSortState(readSort()), []);
+  const chooseSort = (id, focus = false) => {
+    setSortState(id);
+    try {
+      localStorage.setItem(SORT_KEY, id);
+    } catch {}
+    if (focus) sortRefs.current[id]?.focus();
+  };
 
   // "/" focuses search from anywhere on the page
   useEffect(() => {
@@ -35,25 +64,30 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
     if (extractMint(q) || q.replace(/^\$/, '').length < 2) {
       setResults([]);
       setSearching(false);
+      setSearchError('');
       return;
     }
     const n = ++seq.current;
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const r = await fetch(`/api/search?${new URLSearchParams({ q, sort, limit: '15' })}`);
         const j = await r.json();
         if (n !== seq.current) return;
         setResults(j.results || []);
+        setSearchError(!r.ok && j.error ? j.error : '');
         setActive(0);
       } catch {
-        if (n === seq.current) setResults([]);
+        if (n === seq.current) {
+          setResults([]);
+          setSearchError('Search is unavailable right now');
+        }
       } finally {
         if (n === seq.current) setSearching(false);
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, sort]);
 
   const reset = () => {
     setOpen(false);
@@ -76,6 +110,27 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
       return;
     }
     if (results.length) pick(results[active] || results[0]);
+  };
+
+  // the sort switch: arrow keys move between the options
+  const onSortKey = (e) => {
+    const i = SORTS.findIndex((s) => s.id === sort);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      chooseSort(SORTS[(i + 1) % SORTS.length].id, true);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      chooseSort(SORTS[(i + SORTS.length - 1) % SORTS.length].id, true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      inputRef.current?.focus();
+    }
+  };
+
+  // close when focus leaves the search (the sort switch counts as inside)
+  const onSearchBlur = (e) => {
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+    setTimeout(() => setOpen(false), 120);
   };
 
   const onKeyDown = (e) => {
@@ -138,7 +193,7 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
         </a>
       </nav>
 
-      <form className="tb-search" role="search" onSubmit={submit}>
+      <form className="tb-search" role="search" onSubmit={submit} onBlur={onSearchBlur}>
         <label htmlFor="tb-q" className="sr-only">
           Search coins by name, ticker or contract address
         </label>
@@ -153,7 +208,6 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={onKeyDown}
           placeholder="Search by name, ticker or contract address"
           autoComplete="off"
@@ -170,39 +224,73 @@ export default function TopBar({ view, onNavigate, onOpenToken, wallet, solBal, 
           </kbd>
         )}
         {showList && (
-          <ul className="sr" id="tb-results" role="listbox" aria-label="Search results">
-            {results.map((r, i) => (
-              <li key={r.mint} id={`tb-opt-${i}`} role="option" aria-selected={i === active}>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className={`sr-item${i === active ? ' on' : ''}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    pick(r);
-                  }}
-                  onMouseEnter={() => setActive(i)}
-                >
-                  <TokenImage src={r.imageUrl} label={r.symbol} size={32} />
-                  <span className="sr-main">
-                    <span className="sr-name">{r.name}</span>
-                    <span className="sr-meta">
-                      <span className="sr-sym">{r.symbol}</span>
-                      <span className="mono">{short(r.mint)}</span>
-                      {r.dexId ? <span>{dexLabel(r.dexId)}</span> : null}
+          <div className="sr">
+            <div className="sr-head" onMouseDown={(e) => e.preventDefault()}>
+              <div className="seg sr-sort" role="radiogroup" aria-label="Order results" onKeyDown={onSortKey}>
+                {SORTS.map((s) => (
+                  <button
+                    key={s.id}
+                    ref={(el) => {
+                      sortRefs.current[s.id] = el;
+                    }}
+                    type="button"
+                    role="radio"
+                    aria-checked={sort === s.id}
+                    tabIndex={sort === s.id ? 0 : -1}
+                    className={sort === s.id ? 'on' : undefined}
+                    title={s.hint}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => chooseSort(s.id)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <span className="sr-hint">{SORTS.find((s) => s.id === sort)?.hint}</span>
+            </div>
+            <ul className="sr-list" id="tb-results" role="listbox" aria-label="Search results" aria-busy={searching}>
+              {results.map((r, i) => (
+                <li key={r.mint} id={`tb-opt-${i}`} role="option" aria-selected={i === active}>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className={`sr-item${i === active ? ' on' : ''}`}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pick(r);
+                    }}
+                    onMouseEnter={() => setActive(i)}
+                  >
+                    <TokenImage src={r.imageUrl} label={r.symbol} size={32} />
+                    <span className="sr-main">
+                      <span className="sr-name">{r.name || r.symbol}</span>
+                      <span className="sr-meta">
+                        <span className="sr-sym">{r.symbol}</span>
+                        {r.createdAt ? (
+                          <span className={Date.now() - r.createdAt < 3600e3 ? 'sr-age new' : 'sr-age'} title="Age">
+                            {age(r.createdAt)}
+                          </span>
+                        ) : null}
+                        {r.holders ? <span title="Holders">{count(r.holders)} holders</span> : null}
+                        <span className="mono">{short(r.mint)}</span>
+                      </span>
                     </span>
-                  </span>
-                  <span className="sr-stats">
-                    <span>{usd(r.marketCap)}</span>
-                    <span className={tone(r.change24h)}>{pct(r.change24h)}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-            {!results.length && (
-              <li className="sr-empty">{searching ? 'Searching…' : `No Solana coins match “${q}”.`}</li>
-            )}
-          </ul>
+                    <span className="sr-stats">
+                      <span title="Market cap">{usd(r.marketCap)}</span>
+                      <span className="muted" title="Volume in the last hour">
+                        V {r.volume1h === null || r.volume1h === undefined ? '—' : usd(r.volume1h)}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {!results.length && (
+                <li className="sr-empty">
+                  {searching ? 'Searching…' : searchError ? `${searchError}. Try again in a moment.` : `No Solana coins match “${q}”.`}
+                </li>
+              )}
+            </ul>
+          </div>
         )}
       </form>
 

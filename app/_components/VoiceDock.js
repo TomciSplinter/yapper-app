@@ -36,6 +36,8 @@ import { useVoicePrefs, getPrefs, setPrefs, onAnnounce, announce, settingsChange
 import { speak as speakOut, stopSpeaking, onSpeaking, unlockAudio, installAudioUnlock } from '../_lib/speech';
 import { createWake, wakeSupported } from '../_lib/wake';
 import { gatherExtras, settleExtras, listInfo } from '../_lib/voicecontext';
+import { onScreen, screenSummary } from '../_lib/screen';
+import { findCoin, fromSearch, nearMc } from '../_lib/findcoin';
 import { isAffirmative, plain, checkLeg, RISKY, PENDING_MS } from '../_lib/voicecheck';
 import { amount as fmtAmount, sol as fmtSol, usd } from '../_lib/format';
 import { Icon } from './Icons';
@@ -80,6 +82,35 @@ function pendingText(p) {
   if (p.kind === 'setting') return p.text;
   const extra = [p.tp && `take profit ${legText(p.tp)}`, p.sl && `stop loss ${legText(p.sl)}`].filter(Boolean).join(', ');
   return `${p.side === 'buy' ? `Buy ${p.amountSol} SOL of` : `Sell ${p.percent}% of`} ${p.symbol}${extra ? ` with ${extra}` : ''}`;
+}
+
+const plural = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+
+function oldText(createdAt, now = Date.now()) {
+  if (!createdAt) return '';
+  const m = (now - createdAt) / 60000;
+  if (m < 60) return `${plural(Math.max(1, Math.round(m)), 'minute')} old`;
+  if (m < 48 * 60) return `${plural(Math.round(m / 60), 'hour')} old`;
+  if (m < 14 * 1440) return `${plural(Math.round(m / 1440), 'day')} old`;
+  return '';
+}
+
+// what voice says when it opens a coin it had to look for
+function openLine(coin, cmd) {
+  const sym = coin.symbol || coin.name || 'that coin';
+  const f = coin.found;
+  if (!f) return `Opening ${sym}.`;
+  const at = coin.mc ? ` at ${usd(coin.mc)}` : '';
+  let line;
+  if (f.from !== 'search') line = `Opening ${sym}.`;
+  else if (!f.exact && !f.near) line = `I couldn't find a coin called ${plain(cmd.coin, 40)}. Opening ${sym}${at}, the closest name.`;
+  else if (cmd.coin_mc) line = `Opening ${sym}${at}${nearMc(coin, cmd.coin_mc) ? '' : `, the closest to ${usd(cmd.coin_mc)} I found`}.`;
+  else {
+    const old = oldText(coin.createdAt);
+    line = `Opening ${sym}${old ? `, ${old},` : ''}${at}.`;
+  }
+  if (f.others.length) line += f.others.length === 1 ? ' Another match is below.' : ' Other matches are below.';
+  return line;
 }
 
 export default function VoiceDock({ getContext, getInputs, openToken, navigate, wallet, connect, solBal, solPrice, toast, onTraded, onQuickBuy }) {
@@ -239,8 +270,10 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
       try {
         ts = JSON.parse(localStorage.getItem('yapper:trade-settings') || '{}') || {};
       } catch {}
+      const seen = screenSummary();
       return {
         ...ctx,
+        screen: { page: ctx.screen, showing: seen.showing, tickers: seen.tickers },
         coin: ctx.coin ? { ...ctx.coin, safety: ex.safety || null, recent_trades: ex.recent_trades || null } : null,
         pending: pendingRef.current ? { kind: pendingRef.current.kind, text: pendingText(pendingRef.current) } : null,
         orders: getOrders()
@@ -273,12 +306,28 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
     return c;
   };
 
+  // /api/search results in the shape the ranking uses (fuzzy: spoken names)
+  const searchCoins = useCallback(async (q, { sort, mc }) => {
+    const qs = new URLSearchParams({ q, sort: sort || 'best', fuzzy: '1', limit: '12' });
+    if (mc) qs.set('mc', String(Math.round(mc)));
+    const r = await fetch(`/api/search?${qs}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok && !Array.isArray(j?.results)) throw new Error(j?.error || 'Search failed');
+    return (j.results || []).map(fromSearch).filter(Boolean);
+  }, []);
+
+  // A named coin, looked for the way you would: the coin that's open, the
+  // coins on your screen, ones we just talked about, ones you hold or traded,
+  // your orders, then a search that puts fresh coins with holders and real
+  // trading ahead of older, bigger ones. "the PEPE at 25K" takes the closest
+  // market cap.
   const resolveCoin = useCallback(
     async (cmd) => {
       const ctx = getContext();
-      const cur = ctx.coin?.mint ? { mint: ctx.coin.mint, symbol: ctx.coin.symbol, name: ctx.coin.name, imageUrl: ctx.coin.image } : null;
+      const cur = ctx.coin?.mint ? { mint: ctx.coin.mint, symbol: ctx.coin.symbol, name: ctx.coin.name, imageUrl: ctx.coin.image, mc: ctx.coin.market_cap_usd } : null;
       if (cmd.coin_is_current || !cmd.coin) return remember(cur);
-      if (cur && norm(cmd.coin) && (norm(cmd.coin) === norm(cur.symbol) || norm(cmd.coin) === norm(cur.name))) return remember(cur);
+      const want = norm(cmd.coin);
+      if (cur && want && (want === norm(cur.symbol) || want === norm(cur.name)) && !cmd.coin_pick && nearMc(cur, cmd.coin_mc)) return remember(cur);
       const m = extractMint(cmd.coin);
       if (m) {
         const li = listInfo(m);
@@ -286,33 +335,33 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         const p = await fetchPair(m).catch(() => null);
         return remember({ mint: m, symbol: p?.baseToken?.symbol || '', name: p?.baseToken?.name || '', imageUrl: p?.info?.imageUrl || null });
       }
-      const want = norm(cmd.coin);
-      // a ticker you just talked about, newest first
-      for (const t of [...historyRef.current].reverse()) {
-        const hit = [t.coin, ...(t.listed || [])].find((c) => c && norm(c.symbol) && norm(c.symbol) === want);
-        if (hit) return resolveCoin({ coin: hit.mint });
-      }
-      // then your own orders, newest first
+      // coins from the last few answers, newest first
+      const recent = [...historyRef.current].reverse().flatMap((t) => [t.coin, ...(t.listed || [])]).filter((c) => c?.mint);
+      // coins you hold, then ones you traded (from the portfolio gathered while you spoke)
+      const ex = await settleExtras(extrasRef.current?.data ? { portfolio: extrasRef.current.data.portfolio } : null, 300);
+      const held = [...(ex.portfolio?.holdings || []), ...(ex.portfolio?.coins || [])].filter((c) => c?.mint);
+      // your orders and alerts, open ones and newest first
       const mine = getOrders()
-        .filter((x) => want && norm(x.symbol) === want && (x.wallet === walletRef.current || x.type === 'alert'))
-        .sort((a, b) => Number(isLive(b)) - Number(isLive(a)) || (b.createdAt || 0) - (a.createdAt || 0));
-      const o = mine[0];
-      if (o) return remember({ mint: o.mint, symbol: o.symbol, name: o.name, imageUrl: o.image });
-      const r = await fetch(`/api/search?q=${encodeURIComponent(cmd.coin)}`);
-      const j = await r.json().catch(() => ({}));
-      const t = j?.results?.[0];
-      return remember(t ? { mint: t.mint, symbol: t.symbol, name: t.name, imageUrl: t.imageUrl } : null);
+        .filter((x) => x.wallet === walletRef.current || x.type === 'alert')
+        .sort((a, b) => Number(isLive(b)) - Number(isLive(a)) || (b.createdAt || 0) - (a.createdAt || 0))
+        .map((o) => ({ mint: o.mint, symbol: o.symbol, name: o.name, image: o.image }));
+      const found = await findCoin(cmd.coin, { mc: cmd.coin_mc, pick: cmd.coin_pick, screen: onScreen(), recent, held, orders: mine, search: searchCoins });
+      if (!found) return remember(null);
+      const c = found.coin;
+      return remember({ mint: c.mint, symbol: c.symbol || '', name: c.name || '', imageUrl: c.image || null, mc: c.mc ?? null, createdAt: c.createdAt ?? null, found });
     },
-    [getContext]
+    [getContext, searchCoins]
   );
 
-  // coins you've seen with your own eyes: the open coin, ones from earlier
-  // answers (not this one: it could name a coin and copy it in one go), your
-  // orders and coins this wallet traded. Copy and share only use these.
+  // coins you've seen with your own eyes: the open coin, the coins on your
+  // screen, ones from earlier answers (not this one: it could name a coin and
+  // copy it in one go), your orders and coins this wallet traded. Copy and
+  // share only use these.
   const trustedMint = useCallback(
     (mint) => {
       if (!mint) return false;
       if (getContext().coin?.mint === mint) return true;
+      if (onScreen().some((c) => c.mint === mint)) return true;
       if (historyRef.current.some((t) => t.coin?.mint === mint || (t.listed || []).some((c) => c.mint === mint))) return true;
       if (getOrders().some((o) => o.mint === mint)) return true;
       // a coin this wallet has traded
@@ -353,6 +402,21 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         })
       );
     }
+  }, []);
+
+  // the other coins that fit the name, as cards to tap ("open the second one" works too)
+  const showOthers = useCallback((others) => {
+    const list = others.slice(0, 3).map((c) => ({
+      mint: c.mint,
+      symbol: plain(c.symbol, 16),
+      name: plain(c.name, 40),
+      image: c.image || null,
+      mc: c.mc ?? null,
+      chg: c.chg1h ?? null,
+      createdAt: c.createdAt ?? null,
+    }));
+    turnRef.current.listed = list.map((c) => ({ mint: c.mint, symbol: c.symbol }));
+    setCards(list);
   }, []);
 
   /* ---------- trades now ---------- */
@@ -851,7 +915,8 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
           const coin = await resolveCoin(cmd);
           if (!coin) return fail(cmd.coin ? `I couldn't find a Solana coin called ${cmd.coin}.` : 'Which coin should I open?');
           openToken(coin.mint);
-          return say(`Opening ${coin.symbol || coin.name || 'that coin'}.`);
+          if (coin.found?.others?.length) showOthers(coin.found.others);
+          return say(openLine(coin, cmd));
         }
         case 'buy':
         case 'sell':
@@ -874,7 +939,7 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
           return say(cmd.reply || 'Try saying: buy 0.1 SOL of this, sell half at 2x, or find me something on the curve.', cmd.reply ? cmd.lang : 'en');
       }
     },
-    [showCards, confirmPending, cancelPending, say, fail, navigate, resolveCoin, openToken, prepareTrade, prepareOrder, makeAlert, cancelOrdersCmd, prepareSellMany, applySetting, copyAddress, shareCoin]
+    [showCards, showOthers, confirmPending, cancelPending, say, fail, navigate, resolveCoin, openToken, prepareTrade, prepareOrder, makeAlert, cancelOrdersCmd, prepareSellMany, applySetting, copyAddress, shareCoin]
   );
 
   const send = useCallback(

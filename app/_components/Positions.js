@@ -7,10 +7,13 @@ import { ownSummary } from '../_lib/portfolio';
 import { usd, price, pct, tone, amount, short } from '../_lib/format';
 import { TokenImage, TableSkeleton } from './Icons';
 import Empty from './Empty';
+import { useOnScreen } from '../_lib/screen';
 
 export default function Positions({ wallet, refreshKey, onOpenToken, onConnect, onBrowse, solPrice }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
+  // while this page is open, voice looks at these coins first
+  useOnScreen('positions', 'Your positions', wallet ? rows : null);
 
   useEffect(() => {
     if (!wallet) {

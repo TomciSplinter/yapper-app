@@ -26,7 +26,7 @@ export const SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [
-    'action', 'side', 'coin', 'coin_is_current', 'amount_sol', 'amount_usd', 'percent',
+    'action', 'side', 'coin', 'coin_is_current', 'coin_mc', 'coin_pick', 'amount_sol', 'amount_usd', 'percent',
     'trigger_kind', 'trigger_value', 'trigger_dir',
     'take_profit_kind', 'take_profit_value', 'stop_loss_kind', 'stop_loss_value',
     'expires_minutes', 'filter', 'filter_pct', 'order_ids',
@@ -35,8 +35,10 @@ export const SCHEMA = {
   properties: {
     action: { type: 'string', enum: ACTIONS },
     side: { type: ['string', 'null'], enum: ['buy', 'sell', null], description: 'For order: buy or sell. Null for other actions.' },
-    coin: nullable('string', 'Coin as the user said it (name or ticker), or its mint address when it comes from the context (lists, holdings, history). Null for the coin on screen.'),
+    coin: nullable('string', 'Ticker or name as the user said it, without words like coin or token; or a mint address when the coin is picked from history, holdings or orders. Null for the coin on screen.'),
     coin_is_current: { type: 'boolean', description: 'True when the user means the coin on screen (this, it, current one) or names it.' },
+    coin_mc: nullable('number', 'A market cap in USD the user gives to say WHICH coin they mean: "the PEPE that\'s at 25K" = 25000. Not an order trigger.'),
+    coin_pick: { type: ['string', 'null'], enum: ['newest', 'biggest', null], description: '"the new/newest/latest PEPE" = newest; "the biggest/main/original/OG PEPE" = biggest. Null otherwise.' },
     amount_sol: nullable('number', 'SOL to spend (buys and limit buys).'),
     amount_usd: nullable('number', 'Dollars to spend when the user says dollars.'),
     percent: nullable('number', 'Percent of the holding to sell, 1-100 (sells, sell orders, sell_many).'),
@@ -65,7 +67,7 @@ export const SYSTEM = `You are Yapper, the voice assistant inside a Solana memec
 
 You get JSON with:
 - said: the user's words (speech to text, may have small errors: "soul"/"sold" can mean SOL, tickers may be misspelled).
-- context: what's on screen and the user's data: coin (the open coin, with safety facts and recent trades), wallet (balance, holding and position in the open coin), pending (something waiting for yes/no), orders (open orders and alerts), portfolio (PnL today and this week, per-coin PnL, holdings), lists (coins to scan: trending on the bonding curve, final_stretch, new_pairs, migrated), settings.
+- context: what's on screen and the user's data: screen (the page the user is on and the tickers of the coins on it), coin (the open coin, with safety facts and recent trades), wallet (balance, holding and position in the open coin), pending (something waiting for yes/no), orders (open orders and alerts), portfolio (PnL today and this week, per-coin PnL, holdings), lists (coins to scan: trending on the bonding curve, final_stretch, new_pairs, migrated), settings.
 - history: the last few exchanges, newest last, with the coins each reply named ("listed"). Use it for follow-ups.
 
 Actions:
@@ -82,13 +84,13 @@ Actions:
 - sell_many: sell several holdings at once. "sell all my bags" -> filter all, percent 100. "sell everything that's down more than 50%" -> filter losing, filter_pct 50. "sell my winners" -> filter winning. Never sell_many unless they clearly ask for several coins.
 - settings: change a setting. "set slippage to 15" -> slippage 15; "priority fee 0.001" -> priority_fee; "quick buy 0.25" -> quick_buy; "turn on callouts", "stop talking about my positions" -> callouts on/off; "hands free", "wake word" -> wake_word; "natural voice"/"robot voice" -> natural_voice; "stop reading my trades" -> trade_summaries off; "be quiet", "mute" -> voice_replies off.
 - copy_address: copy a coin's contract address. share: share a coin on X.
-- open: show a coin. "open the second one" -> the 2nd coin in the latest history listed, as its mint.
+- open: show a coin. "open the second one" -> the 2nd coin in the latest history listed, as its mint. "open the PEPE that's at 25K" -> coin "PEPE", coin_mc 25000. "open the newest PEPE" -> coin_pick newest; "the biggest/original PEPE" -> coin_pick biggest.
 - navigate: go to "discover" (trending, home), "pulse" (new pairs, final stretch, migrated) or "positions" (portfolio, my bags).
 - ask: questions and lookups. Answer in reply from the context only.
 - confirm: yes/do it/send it, only when context.pending is not null. cancel: no/stop/never mind (also clears pending).
 - unknown: anything else; reply with a short example of what they can say.
 
-Coins: this/it/the coin on screen -> coin_is_current true, coin null. A coin named in history, lists, holdings or orders -> put its mint address in coin. Otherwise the coin as they said it (fix obvious ticker spelling: "bonk" -> "BONK").
+Coins: this/it/the coin on screen -> coin_is_current true, coin null. A coin picked from an earlier reply ("the second one", a coin named in history), from the user's holdings or from their orders -> its mint address in coin. Any other coin -> its ticker or name as they said it, without "coin"/"token" (fix obvious spelling: "bonk" -> "BONK"; if it sounds like a ticker in context.screen.tickers, use that ticker). Never swap in a different coin from the lists because the name is similar: the app finds the right coin, starting with the ones on the user's screen. coin_mc and coin_pick only say which coin they mean and work with any action ("buy 0.5 of the PEPE that's at 25K" is a buy now with coin_mc 25000; it's an order only when they say if/when it reaches a level).
 
 Follow-ups: "actually make it 0.3" while something is pending -> repeat that command with the new amount. "do the same on the next one" -> repeat the last action on the next coin in the latest listed. "open the second one" -> the second listed coin.
 
@@ -125,6 +127,8 @@ export function clean(cmd) {
     side: pick(cmd?.side, ['buy', 'sell']),
     coin: typeof cmd?.coin === 'string' && cmd.coin.trim() ? cmd.coin.trim().slice(0, 64) : null,
     coin_is_current: !!cmd?.coin_is_current,
+    coin_mc: num(cmd?.coin_mc, 0, 1e13),
+    coin_pick: pick(cmd?.coin_pick, ['newest', 'biggest']),
     amount_sol: num(cmd?.amount_sol, 0, 1000),
     amount_usd: num(cmd?.amount_usd, 0, 1e7),
     percent: num(cmd?.percent, 0, 100),
@@ -165,7 +169,7 @@ export function plainText(v, max = 120) {
     .slice(0, max);
 }
 
-const LIMITS = { symbol: 16, coin: 24, name: 32, label: 24, text: 120 };
+const LIMITS = { symbol: 16, coin: 24, name: 32, label: 24, text: 120, tickers: 16, showing: 24 };
 
 export function scrubContext(v, key = '', depth = 0) {
   if (depth > 8) return null;
