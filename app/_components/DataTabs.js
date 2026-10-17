@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Trades from './Trades';
 import Holders from './Holders';
 import Positions from './Positions';
+import { TableSkeleton } from './Icons';
 
 const TABS = [
   { id: 'trades', label: 'Trades' },
@@ -37,7 +38,7 @@ export default function DataTabs({ mint, pair, pairReady, supply, wallet, holder
           (pairReady ? (
             <Trades key={mint} mint={mint} pairAddress={pair?.pairAddress} supply={supply} wallet={wallet} />
           ) : (
-            <p className="empty-note">Loading trades…</p>
+            <TableSkeleton cols={7} />
           ))}
         {tab === 'holders' && <Holders holders={holders} wallet={wallet} priceUsd={Number(pair?.priceUsd)} />}
         {tab === 'positions' && (

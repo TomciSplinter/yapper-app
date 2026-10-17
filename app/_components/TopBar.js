@@ -274,13 +274,13 @@ function WalletMenu({ wallet, solBal, onDisconnect }) {
         aria-label={`Wallet ${info?.name || ''}, ${solBal === null ? 'balance loading' : `${sol(solBal)} SOL`}`}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon name="wallet" size={15} />
+        <Icon name="wallet" size={15} className="wm-ico" />
         <span className="wm-bal">
           {solBal === null ? '—' : sol(solBal)} <span className="muted">SOL</span>
         </span>
         <span className="wm-name">{info?.name || short(wallet)}</span>
         {local && !ws.unlocked && <Icon name="lock" size={12} className="wm-lock" />}
-        <Icon name="chevronDown" size={14} />
+        <Icon name="chevronDown" size={14} className="wm-chev" />
       </button>
       {open && (
         <div className="wm-menu" role="menu">

@@ -12,6 +12,7 @@ import { useNow } from '../_lib/hooks';
 import { usd, pct, tone, age, count, dexLabel } from '../_lib/format';
 import { loadLists, useLive, useTokenInfo, liveRow, sparkPoints, useQuickBuy } from '../_lib/pump';
 import { Icon, TableSkeleton } from './Icons';
+import Empty from './Empty';
 import { Sparkline, CoinAvatar, Socials, CopyCA, TokenStats, QuickBuyButton, QuickBuyInput } from './CoinBits';
 
 const TABS = [
@@ -293,7 +294,7 @@ export default function Discover({ onOpenToken, onQuickBuy }) {
       <div className="dc-table" role="table" aria-label={`${def.label} coins`}>
         <div className="dc-head" role="row">
           <span className="dc-h dc-coin-h" role="columnheader" aria-sort={sort.key === 'age' ? (sort.dir < 0 ? 'descending' : 'ascending') : 'none'}>
-            Coin
+            <span>Coin</span>
             {sortButton('age', 'Age', 'dc-sort-age')}
           </span>
           <span className="dc-h dc-chart-h" role="columnheader">
@@ -312,20 +313,27 @@ export default function Discover({ onOpenToken, onQuickBuy }) {
         </div>
 
         {shown === null && <TableSkeleton cols={7} rows={10} />}
-        {shown !== null && error && !shown.length && <p className="empty-note">{error}</p>}
+        {shown !== null && error && !shown.length && (
+          <Empty icon="alert" title="Coins didn't load">
+            {error}
+          </Empty>
+        )}
         {shown !== null && !error && !shown.length && (
-          <div className="empty-state">
-            <p>
-              {tab === 'trending'
-                ? `No bonding-curve coins between ${kUsd(filter.mcMin)} and ${kUsd(filter.mcMax)} with that much volume right now.`
-                : 'No coins to show right now.'}
-            </p>
-            {tab === 'trending' && (
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => setFilter({ ...filter, mcMin: 0, mcMax: 100000, volMin: 0 })}>
-                Show every curve coin
-              </button>
-            )}
-          </div>
+          <Empty
+            icon="search"
+            title={tab === 'trending' ? 'Nothing matches your filter' : 'No coins to show right now'}
+            action={
+              tab === 'trending' ? (
+                <button type="button" className="btn btn-ghost" onClick={() => setFilter({ ...filter, mcMin: 0, mcMax: 100000, volMin: 0 })}>
+                  Show every curve coin
+                </button>
+              ) : null
+            }
+          >
+            {tab === 'trending'
+              ? `No bonding-curve coins between ${kUsd(filter.mcMin)} and ${kUsd(filter.mcMax)} with that much volume right now.`
+              : 'Check back in a minute.'}
+          </Empty>
         )}
 
         {rows && rows.length > 0 && (

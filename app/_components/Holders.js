@@ -2,12 +2,25 @@
 
 import { usd, amount, short } from '../_lib/format';
 import { TableSkeleton } from './Icons';
+import Empty from './Empty';
 
 export default function Holders({ holders, wallet, priceUsd }) {
   if (!holders || (holders.loading && !holders.rows)) return <TableSkeleton cols={5} />;
-  if (holders.error && !holders.rows) return <p className="empty-note">{holders.error}</p>;
+  if (holders.error && !holders.rows) {
+    return (
+      <Empty icon="users" title="Holders aren't available yet" compact>
+        {holders.error}
+      </Empty>
+    );
+  }
   const rows = holders.rows || [];
-  if (!rows.length) return <p className="empty-note">No holders found for this coin.</p>;
+  if (!rows.length) {
+    return (
+      <Empty icon="users" title="No holders found" compact>
+        This coin's holders will show up once it has some.
+      </Empty>
+    );
+  }
   // bars are scaled to the largest holder so small differences stay visible
   const maxPct = Math.max(...rows.map((r) => r.pct || 0), 0.0001);
 

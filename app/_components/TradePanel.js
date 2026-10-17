@@ -421,14 +421,22 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
         </p>
       )}
 
-      {wallet && (position || tokenBal > 0) && (
-        <PositionCard position={position} tokenBal={tokenBal} holdingUsd={holdingUsd} symbol={pair?.baseToken?.symbol || ''} solPrice={solPrice} supply={supply} />
-      )}
-
-      {orders.length > 0 && (
-        <div className="tp-orders">
-          <span className="tp-label">Open orders</span>
-          <OrdersList orders={orders} />
+      {((wallet && (position || tokenBal > 0)) || orders.length > 0) && (
+        <div className="tp-after">
+          {wallet && (position || tokenBal > 0) && (
+            <div className="tp-group">
+              <h2 className="pane-title">Your position</h2>
+              <PositionCard position={position} tokenBal={tokenBal} holdingUsd={holdingUsd} symbol={pair?.baseToken?.symbol || ''} solPrice={solPrice} supply={supply} />
+            </div>
+          )}
+          {orders.length > 0 && (
+            <div className="tp-group tp-orders">
+              <h2 className="pane-title">
+                Open orders <span className="count">{orders.length}</span>
+              </h2>
+              <OrdersList orders={orders} />
+            </div>
+          )}
         </div>
       )}
     </section>

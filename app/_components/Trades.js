@@ -5,6 +5,7 @@ import { gt, withPool, parseTrades } from '../_lib/markets';
 import { useNow } from '../_lib/hooks';
 import { usd, price, amount, sol, age, short } from '../_lib/format';
 import { Icon, TableSkeleton } from './Icons';
+import Empty from './Empty';
 
 export default function Trades({ mint, pairAddress, supply, wallet }) {
   const [rows, setRows] = useState(null);
@@ -54,8 +55,20 @@ export default function Trades({ mint, pairAddress, supply, wallet }) {
   }, [mint, pairAddress]);
 
   if (rows === null) return <TableSkeleton cols={7} />;
-  if (error) return <p className="empty-note">{error}</p>;
-  if (!rows.length) return <p className="empty-note">No trades in the last 24 hours.</p>;
+  if (error) {
+    return (
+      <Empty icon="pulse" title="No trades to show yet" compact>
+        {error}
+      </Empty>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <Empty icon="pulse" title="No trades in the last 24 hours" compact>
+        New trades show up here as they happen.
+      </Empty>
+    );
+  }
 
   return (
     <table className="tbl">

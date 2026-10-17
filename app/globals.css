@@ -29,6 +29,8 @@
   --r-md: 8px;
   --r-lg: 12px;
   --status: 38px;
+  --gutter: 16px; /* page edge to content, everywhere */
+  --dock: 56px; /* room at the end of every list, above the orb's socket */
 }
 
 * {
@@ -165,7 +167,7 @@ p {
   font-size: 12px;
 }
 .view-body {
-  padding-bottom: 28px;
+  padding-bottom: var(--dock);
   border-top: 1px solid var(--rule);
 }
 
@@ -713,6 +715,10 @@ p {
   letter-spacing: -0.01em;
   line-height: 1.1;
 }
+.th-stat.split {
+  padding-left: 24px;
+  border-left: 1px solid var(--rule);
+}
 .th-nodata {
   padding-left: 24px;
   border-left: 1px solid var(--rule);
@@ -851,6 +857,33 @@ p {
   color: var(--ink-2);
   opacity: 1;
 }
+.pc-hint {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 9px 14px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--rule-2);
+  border-radius: 12px;
+  background: rgba(8, 12, 10, 0.88);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  pointer-events: none;
+}
+.pc-hint-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--up);
+  box-shadow: 0 0 0 3px rgba(0, 245, 168, 0.15);
+  animation: vp-blink 1.6s ease-in-out infinite;
+}
 .pc-note {
   position: absolute;
   inset: 0;
@@ -907,7 +940,7 @@ p {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding-bottom: 24px;
+  padding-bottom: var(--dock);
 }
 
 /* trade panel */
@@ -1133,31 +1166,46 @@ p {
   margin: 0;
   accent-color: var(--mint);
 }
-.tp-orders {
+.tp-after {
   display: grid;
-  gap: 6px;
+  gap: 16px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.tp-group {
+  display: grid;
+  gap: 8px;
+}
+.tp-group .pane-title {
+  display: flex;
+  align-items: center;
 }
 
 /* open orders and alerts */
 .ol {
   display: grid;
-  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--raise);
+  overflow: hidden;
 }
 .ol-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 4px 4px 4px 8px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-md);
-  background: var(--raise);
+  min-height: 40px;
+  padding: 6px 6px 6px 10px;
+  border-top: 1px solid var(--rule);
   font-size: 12px;
 }
-.ol-row.done {
+.ol-row:first-child {
+  border-top: 0;
+}
+.ol-row.done > * {
   opacity: 0.6;
 }
 .ol-tag {
@@ -1217,29 +1265,39 @@ p {
 }
 .os {
   display: grid;
-  gap: 10px;
-  margin-top: 24px;
-  padding: 0 16px;
+  gap: 12px;
+  margin-top: 32px;
+  padding: 0 var(--gutter);
 }
 .os-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
 }
 .os-title {
+  display: flex;
+  align-items: center;
   font-size: 15px;
   font-weight: 600;
 }
 .os-head .muted {
   font-size: 12px;
 }
+.os .empty {
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+}
 .os-done summary {
-  margin-bottom: 6px;
+  width: max-content;
+  margin-bottom: 8px;
   color: var(--ink-3);
   font-size: 12px;
   cursor: pointer;
+}
+.os-done summary:hover {
+  color: var(--ink-2);
 }
 
 /* your position: bought / sold / holding / PnL */
@@ -1508,6 +1566,10 @@ p {
   color: var(--ink-3);
   font-size: 12px;
 }
+.coin-name.unlisted {
+  color: var(--ink-2);
+  font-weight: 500;
+}
 .coin:hover .coin-name {
   text-decoration: underline;
   text-decoration-color: var(--rule-hot);
@@ -1557,15 +1619,66 @@ p {
 }
 .empty-note {
   max-width: 60ch;
-  padding: 28px 16px;
+  padding: 28px var(--gutter);
   color: var(--ink-2);
 }
 .empty-state {
   display: grid;
   justify-items: start;
   gap: 12px;
-  padding: 28px 16px;
+  padding: 28px var(--gutter);
   color: var(--ink-2);
+}
+/* empty, failed and not-yet states: icon ring, one line, what to do */
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 48px var(--gutter);
+  text-align: center;
+}
+.empty.compact {
+  padding: 28px var(--gutter);
+}
+.empty-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--rule-2);
+  background: var(--raise);
+  color: var(--ink-3);
+}
+.empty-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.empty-sub {
+  max-width: 46ch;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.empty-action {
+  margin-top: 10px;
+}
+/* a small count next to a title */
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--raise-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 1px;
 }
 
 /* ---------- status bar and voice orb ---------- */
@@ -1578,11 +1691,23 @@ p {
   justify-content: space-between;
   gap: 16px;
   height: var(--status);
-  padding: 0 14px;
+  padding: 0 var(--gutter);
   border-top: 1px solid var(--rule);
   background: var(--void);
   color: var(--ink-3);
   font-size: 12px;
+}
+/* the orb sits in a socket rising out of the bar's top hairline */
+.sb::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 100%; /* of the padding box: its bottom row lands on the bar's hairline */
+  width: 210px;
+  height: 54px;
+  margin-left: -105px;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='210' height='54' viewBox='0 0 210 54'><path d='M0 53.5H49.9A14 14 0 0 0 63.68 42A42 42 0 0 1 146.32 42A14 14 0 0 0 160.1 53.5H210V54H0Z' fill='%23000'/><path d='M0 53.5H49.9A14 14 0 0 0 63.68 42A42 42 0 0 1 146.32 42A14 14 0 0 0 160.1 53.5H210' fill='none' stroke='%2318211d'/></svg>") no-repeat;
+  pointer-events: none;
 }
 .sb-left,
 .sb-right {
@@ -1745,7 +1870,7 @@ p {
 .vp {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--status) + 50px);
+  bottom: calc(var(--status) + 60px);
   z-index: 55;
   display: grid;
   gap: 10px;
@@ -2284,7 +2409,7 @@ p {
 }
 .dc-tabs button {
   color: var(--ink-3);
-  font-size: 21px;
+  font-size: 20px;
   font-weight: 650;
   letter-spacing: -0.02em;
 }
@@ -2389,6 +2514,7 @@ p {
 }
 
 .dc-table {
+  padding-bottom: var(--dock);
   border-top: 1px solid var(--rule);
 }
 .dc-head,
@@ -2435,8 +2561,14 @@ p {
 .dc-sort.on {
   color: var(--ink);
 }
+.dc-coin-h {
+  display: grid;
+  grid-template-columns: 58px auto;
+  justify-content: start;
+  gap: 0;
+}
 .dc-sort-age {
-  margin: 0;
+  margin: 0 0 0 -6px;
 }
 .dc-dir.asc {
   transform: rotate(180deg);
@@ -2643,7 +2775,7 @@ p {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 36px;
+  padding-bottom: var(--dock);
 }
 .pl-empty {
   padding: 28px 16px;
@@ -3409,10 +3541,11 @@ p {
   .app {
     height: auto;
     min-height: 100vh;
-    grid-template-rows: auto auto var(--status);
+    min-height: 100dvh;
+    grid-template-rows: auto 1fr var(--status);
   }
   .main {
-    padding-bottom: 44px; /* room so the orb never covers the last row */
+    padding-bottom: var(--dock); /* room so the orb never covers the last row */
   }
   .view,
   .tv {
@@ -3478,13 +3611,23 @@ p {
 }
 
 @media (max-width: 760px) {
+  :root {
+    --gutter: 12px;
+  }
   .hide-sm {
     display: none;
   }
   .tb {
     flex-wrap: wrap;
+    align-content: flex-start;
     gap: 8px 12px;
-    padding: 8px 12px;
+    padding: 8px var(--gutter);
+  }
+  .sb::before {
+    width: 180px;
+    height: 46px;
+    margin-left: -90px;
+    background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='46' viewBox='0 0 180 46'><path d='M0 45.5H43.28A12 12 0 0 0 54.96 36.25A36 36 0 0 1 125.04 36.25A12 12 0 0 0 136.72 45.5H180V46H0Z' fill='%23000'/><path d='M0 45.5H43.28A12 12 0 0 0 54.96 36.25A36 36 0 0 1 125.04 36.25A12 12 0 0 0 136.72 45.5H180' fill='none' stroke='%2318211d'/></svg>");
   }
   .tb-brand {
     order: 1;
@@ -3534,6 +3677,7 @@ p {
   }
   .th-id {
     flex: 1 1 100%;
+    align-items: flex-start;
   }
   .th-line2 {
     flex-wrap: wrap;
@@ -3546,6 +3690,10 @@ p {
   }
   .th-stat.big {
     grid-column: 1 / -1;
+  }
+  .th-stat.split {
+    padding-left: 0;
+    border-left: 0;
   }
   .ws-chart {
     height: 380px;
@@ -3675,13 +3823,32 @@ p {
 
 @media (max-width: 420px) {
   .tb-brand span,
-  .wm-name {
+  .wm-name,
+  .wm-chev {
     display: none;
+  }
+  .tb {
+    column-gap: 8px;
+  }
+  .tb-nav a {
+    padding: 0 8px;
+  }
+  .wm-btn {
+    gap: 8px;
+    padding: 0 10px;
   }
   .pl-nums {
     flex-direction: column;
     align-items: flex-end;
     gap: 2px;
+  }
+}
+
+/* the smallest phones: nav and balance share one row */
+@media (max-width: 380px) {
+  .tb-brand,
+  .wm-ico {
+    display: none;
   }
 }
 

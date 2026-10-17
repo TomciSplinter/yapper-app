@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { loadPositions } from '../_lib/markets';
-import { cachedFills, summarize } from '../_lib/fills';
-import { usd, price, pct, tone, amount } from '../_lib/format';
+import { cachedFills } from '../_lib/fills';
+import { ownSummary } from '../_lib/portfolio';
+import { usd, price, pct, tone, amount, short } from '../_lib/format';
 import { TokenImage, TableSkeleton } from './Icons';
+import Empty from './Empty';
 
-export default function Positions({ wallet, refreshKey, onOpenToken, onConnect, solPrice }) {
+export default function Positions({ wallet, refreshKey, onOpenToken, onConnect, onBrowse, solPrice }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
 
@@ -45,23 +47,50 @@ export default function Positions({ wallet, refreshKey, onOpenToken, onConnect, 
 
   if (!wallet) {
     return (
-      <div className="empty-state">
-        <p>Connect your wallet to see the coins you hold.</p>
-        <button type="button" className="btn btn-primary" onClick={onConnect}>
-          Connect wallet
-        </button>
-      </div>
+      <Empty
+        icon="wallet"
+        title="No wallet connected"
+        action={
+          <button type="button" className="btn btn-primary" onClick={onConnect}>
+            Connect wallet
+          </button>
+        }
+      >
+        Connect a wallet to see the coins you hold, their value and your PnL.
+      </Empty>
     );
   }
   if (rows === null) return <TableSkeleton cols={6} rows={5} />;
-  if (error && !rows.length) return <p className="empty-note">{error}</p>;
-  if (!rows.length) return <p className="empty-note">No coins in this wallet yet. Search for a coin to make your first trade.</p>;
+  if (error && !rows.length) {
+    return (
+      <Empty icon="alert" title="Couldn't load your positions">
+        {error}
+      </Empty>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <Empty
+        icon="search"
+        title="No coins in this wallet yet"
+        action={
+          onBrowse ? (
+            <button type="button" className="btn btn-ghost" onClick={onBrowse}>
+              Find a coin
+            </button>
+          ) : null
+        }
+      >
+        Coins you buy show up here with their live value and PnL.
+      </Empty>
+    );
+  }
 
   const total = rows.reduce((s, r) => s + (r.value || 0), 0);
-  // PnL from trades this browser has seen (opening a coin reads its full history)
+  // PnL over the coins you bought (coins sent to you have no entry)
   const pnlOf = (r) => {
     const priceSol = r.priceNative || (solPrice && r.priceUsd ? r.priceUsd / solPrice : null);
-    return summarize(cachedFills(wallet, r.mint), r.amount, priceSol);
+    return ownSummary(cachedFills(wallet, r.mint), r.amount, priceSol).s;
   };
 
   return (
@@ -92,10 +121,10 @@ export default function Positions({ wallet, refreshKey, onOpenToken, onConnect, 
                   onOpenToken(r.mint);
                 }}
               >
-                <TokenImage src={r.imageUrl} label={r.symbol} size={28} />
+                <TokenImage src={r.imageUrl} label={r.listed ? r.symbol : '?'} size={28} />
                 <span className="coin-text">
-                  <span className="coin-name">{r.name}</span>
-                  <span className="coin-sym">{r.symbol}</span>
+                  <span className={`coin-name${r.listed ? '' : ' unlisted'}`}>{r.name}</span>
+                  <span className={`coin-sym${r.listed ? '' : ' mono'}`}>{r.listed ? r.symbol : short(r.mint)}</span>
                 </span>
               </a>
             </td>

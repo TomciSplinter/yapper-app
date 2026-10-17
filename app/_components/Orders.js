@@ -7,6 +7,7 @@ import { cancelOrder, orderLabel, isLive } from '../_lib/orders';
 import { usd } from '../_lib/format';
 import { useNow } from '../_lib/hooks';
 import { Icon, TokenImage } from './Icons';
+import Empty from './Empty';
 
 function left(ms) {
   if (ms <= 0) return 'expiring';
@@ -19,9 +20,9 @@ function left(ms) {
 
 const STATUS = { done: 'Done', failed: 'Failed', cancelled: 'Cancelled', expired: 'Expired', executing: 'Running…', unconfirmed: 'Confirming…' };
 
-export default function OrdersList({ orders, showCoin = false, onOpenToken, empty }) {
+export default function OrdersList({ orders, showCoin = false, onOpenToken, empty = null }) {
   const now = useNow(30000);
-  if (!orders.length) return empty ? <p className="empty-note">{empty}</p> : null;
+  if (!orders.length) return empty;
   return (
     <ul className="ol">
       {orders.map((o) => {
@@ -78,10 +79,20 @@ export function OrdersSection({ orders, onOpenToken }) {
       <header className="os-head">
         <h2 className="os-title" id="os-title">
           Orders and alerts
+          {live.length > 0 && <span className="count">{live.length}</span>}
         </h2>
-        <span className="muted">Run while Yapper is open in a tab</span>
+        <span className="muted">They run while Yapper is open in a tab</span>
       </header>
-      <OrdersList orders={live} showCoin onOpenToken={onOpenToken} empty='No open orders. Set one in a coin’s trade panel or say "buy 0.2 if it dips to 8K".' />
+      <OrdersList
+        orders={live}
+        showCoin
+        onOpenToken={onOpenToken}
+        empty={
+          <Empty icon="target" title="No open orders" compact>
+            Set one in a coin’s trade panel, or say “buy 0.2 if it dips to 8K”.
+          </Empty>
+        }
+      />
       {done.length > 0 && (
         <details className="os-done">
           <summary>Recent ({done.length})</summary>

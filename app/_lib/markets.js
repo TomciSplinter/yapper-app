@@ -273,8 +273,9 @@ export async function loadPositions(wallet) {
     if (!p && !decimals.has(m)) continue;
     rows.push({
       mint: m,
-      name: p?.baseToken?.name || 'Unknown coin',
+      name: p?.baseToken?.name || 'Unlisted coin',
       symbol: p?.baseToken?.symbol || `${m.slice(0, 4)}…${m.slice(-4)}`,
+      listed: !!p,
       imageUrl: p?.info?.imageUrl || null,
       amount: amt,
       priceUsd,

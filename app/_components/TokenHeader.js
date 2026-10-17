@@ -26,9 +26,10 @@ function socialLinks(info) {
   return out.filter((l) => !seen.has(l.url) && seen.add(l.url)).slice(0, 4);
 }
 
-function Stat({ label, value, toneClass, big }) {
+// split: starts a new group (price and size, change, age), set off by a hairline
+function Stat({ label, value, toneClass, big, split }) {
   return (
-    <div className={`th-stat${big ? ' big' : ''}`}>
+    <div className={`th-stat${big ? ' big' : ''}${split ? ' split' : ''}`}>
       <dt>{label}</dt>
       <dd className={toneClass || undefined}>{value}</dd>
     </div>
@@ -94,14 +95,14 @@ export default function TokenHeader({ mint, pair, pairState }) {
       ) : (
         <dl className="th-stats">
           <Stat label="Market cap" value={usd(pair?.marketCap ?? pair?.fdv)} big />
-          <Stat label="Price" value={price(pair?.priceUsd)} />
+          <Stat label="Price" value={price(pair?.priceUsd)} split />
           <Stat label="Liquidity" value={usd(pair?.liquidity?.usd)} />
           <Stat label="Volume 24h" value={usd(pair?.volume?.h24)} />
-          <Stat label="5m" value={pct(ch.m5)} toneClass={tone(ch.m5)} />
+          <Stat label="5m" value={pct(ch.m5)} toneClass={tone(ch.m5)} split />
           <Stat label="1h" value={pct(ch.h1)} toneClass={tone(ch.h1)} />
           <Stat label="6h" value={pct(ch.h6)} toneClass={tone(ch.h6)} />
           <Stat label="24h" value={pct(ch.h24)} toneClass={tone(ch.h24)} />
-          <Stat label="Age" value={age(pair?.pairCreatedAt)} />
+          <Stat label="Age" value={age(pair?.pairCreatedAt)} split />
         </dl>
       )}
     </section>

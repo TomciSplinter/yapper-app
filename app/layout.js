@@ -7,7 +7,7 @@ const brand = Poppins({ subsets: ['latin'], weight: ['800'], variable: '--font-b
 
 export const metadata = {
   title: 'Yapper Terminal',
-  description: 'Trade Solana coins from one fast terminal. Voice trading is coming soon.',
+  description: 'Trade Solana coins from one fast terminal, by voice or by tap: live charts, limit orders, take profit and stop loss.',
 };
 
 export const viewport = {

@@ -100,6 +100,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
   const [chartReady, setChartReady] = useState(false);
   const [sup, setSup] = useState(0);
   const [legend, setLegend] = useState(null);
+  const [liveBars, setLiveBars] = useState(0); // candles built from live prices (no history)
 
   const setState = useCallback((s) => {
     stateRef.current = s;
@@ -310,6 +311,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     lastBarRef.current = null;
     timesRef.current = [];
     athRef.current = null;
+    setLiveBars(0);
     setLegend(null);
     requestAnimationFrame(placeAvatar);
     setState('loading');
@@ -391,6 +393,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     lastBarRef.current = bar;
     noteTime(bar.time);
     bumpAth(bar);
+    if (timesRef.current.length <= 3) setLiveBars(timesRef.current.length);
     if (stateRef.current === 'empty' || stateRef.current === 'error') setState('live');
     if (!hoverRef.current) setLegend(bar);
     requestAnimationFrame(placeAvatar);
@@ -421,7 +424,8 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
       color: '#A3B4AD',
       lineWidth: 1,
       lineStyle: 2, // dashed
-      axisLabelVisible: true,
+      // the value is in the position card; a box on the axis would sit on top of the live price
+      axisLabelVisible: false,
       title: 'Avg entry',
     });
   }, [avgEntryUsd, mult, chartReady]);
@@ -519,10 +523,16 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
               C <b className={dir}>{fmtV(legend.close)}</b>
             </span>
             <b className={dir}>{legend.open ? pct(((legend.close - legend.open) / legend.open) * 100) : ''}</b>
-            {state === 'live' && <span className="pc-live">Live from now. Earlier history is not available yet.</span>}
+            {state === 'live' && <span className="pc-live">Live from now</span>}
           </div>
         )}
 
+        {state === 'live' && liveBars < 3 && (
+          <div className="pc-hint" role="status">
+            <span className="pc-hint-dot" aria-hidden="true" />
+            Building the chart from live trades. Earlier history isn't available for this coin yet.
+          </div>
+        )}
         {state === 'loading' && <div className="pc-note">Loading chart…</div>}
         {state === 'empty' && <div className="pc-note">No trades in this timeframe yet. The chart starts with the next price update.</div>}
         {state === 'error' && <div className="pc-note">Chart data is busy right now. Retrying in 30 seconds.</div>}

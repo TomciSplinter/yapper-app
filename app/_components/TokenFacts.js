@@ -1,6 +1,6 @@
 'use client';
 
-import { usd, count, amount, dexLabel, isPumpCurve } from '../_lib/format';
+import { usd, count, amount, dexLabel } from '../_lib/format';
 
 function Fact({ label, value, toneClass }) {
   return (
@@ -51,7 +51,7 @@ export default function TokenFacts({ pair, holders }) {
         <Fact label="Trades 1h" value={t1 ? count((t1.buys || 0) + (t1.sells || 0)) : '—'} />
         <Fact label="FDV" value={usd(pair?.fdv)} />
         <Fact label="Supply" value={supply ? amount(supply) : '—'} />
-        <Fact label="Pool" value={pair ? (isPumpCurve(pair.dexId) ? 'Pump.fun curve' : dexLabel(pair.dexId)) : '—'} />
+        <Fact label="Pool" value={pair ? dexLabel(pair.dexId) : '—'} />
       </dl>
     </section>
   );

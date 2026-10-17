@@ -392,7 +392,7 @@ export default function App() {
               </div>
             </header>
             <div className="view-body">
-              <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} solPrice={solPrice} />
+              <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} onBrowse={() => go('discover')} solPrice={solPrice} />
               <OrdersSection orders={orders.filter((o) => o.type === 'alert' || !wallet || o.wallet === wallet)} onOpenToken={openToken} />
             </div>
           </section>
