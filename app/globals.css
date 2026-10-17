@@ -3673,8 +3673,10 @@ p {
     display: none;
   }
   .tb {
-    flex-wrap: wrap;
-    align-content: flex-start;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'brand nav wallet' 'search search search';
+    align-items: center;
     gap: 8px 12px;
     padding: 8px var(--gutter);
     padding-top: max(8px, env(safe-area-inset-top));
@@ -3686,11 +3688,12 @@ p {
     background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='46' viewBox='0 0 180 46'><path d='M0 45.5H43.28A12 12 0 0 0 54.96 36.25A36 36 0 0 1 125.04 36.25A12 12 0 0 0 136.72 45.5H180V46H0Z' fill='%23000'/><path d='M0 45.5H43.28A12 12 0 0 0 54.96 36.25A36 36 0 0 1 125.04 36.25A12 12 0 0 0 136.72 45.5H180' fill='none' stroke='%2318211d'/></svg>");
   }
   .tb-brand {
-    order: 1;
+    grid-area: brand;
   }
   .tb-nav {
-    order: 2;
+    grid-area: nav;
     align-self: center;
+    min-width: 0;
   }
   .tb-nav a {
     height: 32px;
@@ -3703,11 +3706,12 @@ p {
     display: none;
   }
   .tb-wallet {
-    order: 3;
+    grid-area: wallet;
+    margin-left: 0;
+    justify-self: end;
   }
   .tb-search {
-    order: 4;
-    flex-basis: 100%;
+    grid-area: search;
     max-width: none;
     margin: 0;
   }
@@ -3883,8 +3887,10 @@ p {
   }
 }
 
-@media (max-width: 420px) {
+/* phones: logo, pages and wallet always share the first row */
+@media (max-width: 520px) {
   .tb-brand span,
+  .wm-ico,
   .wm-name,
   .wm-chev {
     display: none;
@@ -3892,13 +3898,20 @@ p {
   .tb {
     column-gap: 8px;
   }
+  .tb-nav {
+    gap: 0;
+  }
   .tb-nav a {
-    padding: 0 8px;
+    padding: 0 clamp(6px, 2vw, 10px);
+    font-size: clamp(13px, 3.9vw, 15px);
   }
   .wm-btn {
-    gap: 8px;
+    gap: 6px;
     padding: 0 10px;
   }
+}
+
+@media (max-width: 420px) {
   .pl-nums {
     flex-direction: column;
     align-items: flex-end;
@@ -3906,11 +3919,14 @@ p {
   }
 }
 
-/* the smallest phones: nav and balance share one row */
+/* the smallest phones: no room for the logo dot or the SOL label */
 @media (max-width: 380px) {
   .tb-brand,
-  .wm-ico {
+  .wm-bal .muted {
     display: none;
+  }
+  .tb-nav {
+    margin-left: -8px; /* the hidden logo's column keeps its gap */
   }
 }
 
