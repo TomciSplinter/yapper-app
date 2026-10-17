@@ -769,6 +769,18 @@ p {
   display: inline-flex;
   gap: 2px;
 }
+/* timeframes scroll on their own so the market cap / price switch stays in view */
+.pc-bar > .pills:first-child {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pc-bar > .pills:first-child::-webkit-scrollbar {
+  display: none;
+}
+.pc-bar > .pills + .pills {
+  flex: none;
+}
 .pills > button {
   height: 26px;
   padding: 0 10px;
@@ -3703,6 +3715,12 @@ p {
   }
   .pc-bar .pills > button {
     padding: 0 8px;
+  }
+  /* a soft edge says there are more timeframes to swipe to */
+  .pc-bar > .pills:first-child {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    padding-right: 20px;
   }
   .tbl th:first-child,
   .tbl td:first-child {

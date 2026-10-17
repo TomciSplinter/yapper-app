@@ -4,13 +4,21 @@
 // History comes from GeckoTerminal; the latest DexScreener price (refreshed
 // every 10s) is merged into the newest candle so the chart moves in real time.
 // If a coin has no history yet, the chart builds live candles from now on.
+// Second candles (1s to 30s) aren't offered by any history API, so they're
+// built here from the coin's trades: the last few hundred from GeckoTerminal,
+// then every new trade as it happens (PumpPortal's feed for pump.fun coins,
+// plus a GeckoTerminal poll for everything else).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { gt, listPools, rememberPool, knownPool } from '../_lib/markets';
+import { gt, listPools, rememberPool, knownPool, withPool, parseTrades } from '../_lib/markets';
 import { usd, price as fmtPrice, pct, amount as fmtAmount, sol as fmtSol } from '../_lib/format';
 import { TokenImage } from './Icons';
 
 const FRAMES = [
+  { id: '1s', tf: 'second', sec: 1 },
+  { id: '5s', tf: 'second', sec: 5 },
+  { id: '15s', tf: 'second', sec: 15 },
+  { id: '30s', tf: 'second', sec: 30 },
   { id: '1m', tf: 'minute', agg: 1, sec: 60 },
   { id: '5m', tf: 'minute', agg: 5, sec: 300 },
   { id: '15m', tf: 'minute', agg: 15, sec: 900 },
@@ -57,6 +65,32 @@ function toBars(list, mult) {
   return bars;
 }
 
+// trades -> candles. ticks are { t: seconds, p: usd price, v: usd volume }.
+// A candle opens at the previous close so a quiet stretch doesn't leave gaps.
+const MAX_TICKS = 6000;
+function tickBars(ticks, sec, mult) {
+  const list = [...ticks.values()].sort((a, b) => a.t - b.t).slice(-MAX_TICKS);
+  const bars = [];
+  let bar = null;
+  for (const k of list) {
+    const time = Math.floor(k.t / sec) * sec;
+    const v = k.p * mult;
+    if (bar && bar.time === time) {
+      bar.high = Math.max(bar.high, v);
+      bar.low = Math.min(bar.low, v);
+      bar.close = v;
+      bar.volume += k.v || 0;
+    } else {
+      const open = bar ? bar.close : v;
+      bar = { time, open, high: Math.max(open, v), low: Math.min(open, v), close: v, volume: k.v || 0 };
+      bars.push(bar);
+    }
+  }
+  return bars;
+}
+
+const FEED_URL = 'wss://pumpportal.fun/api/data';
+
 const volBar = (b) => ({ time: b.time, value: b.volume || 0, color: b.close >= b.open ? C.upVol : C.downVol });
 const candle = (b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
 
@@ -93,8 +127,12 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
   const fillData = useRef({ fills: [], mult: 1, solPrice: null, sec: 60 });
   const entryLineRef = useRef(null);
   const orderLinesRef = useRef([]);
+  const addTickRef = useRef(null); // set while second candles are showing
+  const solPriceRef = useRef(solPrice);
+  solPriceRef.current = solPrice;
+  const lastFeedRef = useRef(0); // when the live trade feed last delivered
 
-  const [frame, setFrame] = useState(FRAMES[0]);
+  const [frame, setFrame] = useState(() => FRAMES.find((f) => f.id === '1m'));
   const [mode, setMode] = useState('mcap'); // 'mcap' | 'price'
   const [state, setStateRaw] = useState('loading'); // loading | ready | live | empty | error
   const [chartReady, setChartReady] = useState(false);
@@ -315,6 +353,96 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     setLegend(null);
     requestAnimationFrame(placeAvatar);
     setState('loading');
+    chartRef.current?.applyOptions({ timeScale: { secondsVisible: frame.tf === 'second' } });
+    addTickRef.current = null;
+
+    if (frame.tf === 'second') {
+      const ticks = new Map(); // trade signature -> tick
+      // newest trades go straight onto the chart; a late, older one redraws it
+      const addTick = (id, tick) => {
+        if (cancelled || ticks.has(id) || !(tick.p > 0) || !(tick.t > 0)) return false;
+        ticks.set(id, tick);
+        if (ticks.size > MAX_TICKS * 1.2) {
+          const keep = [...ticks.entries()].sort((a, b) => a[1].t - b[1].t).slice(-MAX_TICKS);
+          ticks.clear();
+          keep.forEach(([k, v]) => ticks.set(k, v));
+        }
+        return true;
+      };
+      const redraw = (fresh) => {
+        const bars = tickBars(ticks, frame.sec, mult);
+        if (!bars.length) return false;
+        if (fresh) setAll(bars);
+        else {
+          seriesRef.current.setData(bars.map(candle));
+          volRef.current.setData(bars.map(volBar));
+          lastBarRef.current = bars[bars.length - 1];
+          timesRef.current = bars.map((b) => b.time);
+          athRef.current = null;
+          bars.forEach(bumpAth);
+          if (!hoverRef.current) setLegend(lastBarRef.current);
+          requestAnimationFrame(placeAvatar);
+        }
+        return true;
+      };
+      // one live trade: extend the newest candle, or redraw if it's out of order
+      addTickRef.current = (id, tick) => {
+        if (!addTick(id, tick)) return;
+        const last = lastBarRef.current;
+        const time = Math.floor(tick.t / frame.sec) * frame.sec;
+        if (stateRef.current !== 'ready' || !last || time < last.time) {
+          if (redraw(stateRef.current !== 'ready')) setState('ready');
+          return;
+        }
+        const v = tick.p * mult;
+        const bar =
+          time === last.time
+            ? { ...last, high: Math.max(last.high, v), low: Math.min(last.low, v), close: v, volume: last.volume + (tick.v || 0) }
+            : { time, open: last.close, high: Math.max(last.close, v), low: Math.min(last.close, v), close: v, volume: tick.v || 0 };
+        try {
+          seriesRef.current.update(candle(bar));
+          volRef.current.update(volBar(bar));
+        } catch {
+          redraw(false);
+          return;
+        }
+        lastBarRef.current = bar;
+        noteTime(bar.time);
+        bumpAth(bar);
+        if (!hoverRef.current) setLegend(bar);
+        requestAnimationFrame(placeAvatar);
+      };
+
+      const poll = async () => {
+        if (!document.hidden || stateRef.current === 'loading') {
+          try {
+            const j = await withPool(mint, pairAddress, (pool) => gt(`/pools/${pool}/trades`, isCancelled), isCancelled);
+            if (cancelled) return;
+            let added = false;
+            for (const tr of parseTrades(j?.data, mint)) {
+              if (addTick(tr.tx || tr.id, { t: tr.time / 1000, p: tr.priceUsd, v: tr.usd || 0 })) added = true;
+            }
+            const first = stateRef.current !== 'ready';
+            if (added || first) {
+              if (redraw(first)) setState('ready');
+              else if (stateRef.current !== 'live') setState('empty');
+            }
+          } catch (e) {
+            if (cancelled || e?.cancelled) return;
+            if (stateRef.current === 'loading') setState('error');
+          }
+        }
+        // the live feed carries pump.fun coins; the poll keeps everything else moving
+        const feedOn = Date.now() - lastFeedRef.current < 30000;
+        if (!cancelled) timer = setTimeout(poll, stateRef.current === 'error' ? 30000 : feedOn ? 20000 : 8000);
+      };
+      poll();
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+        addTickRef.current = null;
+      };
+    }
 
     async function load() {
       try {
@@ -376,6 +504,8 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     const p = Number(livePrice);
     const series = seriesRef.current;
     if (!chartReady || !series || !(p > 0) || stateRef.current === 'loading') return;
+    // second candles come from trades; the 10s price only starts a chart that has none
+    if (frame.tf === 'second' && stateRef.current === 'ready') return;
     const v = p * mult;
     const bucket = Math.floor(Date.now() / 1000 / frame.sec) * frame.sec;
     const last = lastBarRef.current;
@@ -399,6 +529,63 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
     requestAnimationFrame(placeAvatar);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePrice, chartReady, mult, frame, state]);
+
+  // every trade on a pump.fun coin as it happens, for second candles
+  const seconds = frame.tf === 'second';
+  useEffect(() => {
+    if (!seconds || !mint || typeof WebSocket === 'undefined') return;
+    let ws = null;
+    let stopped = false;
+    let timer = 0;
+    let attempt = 0;
+    const open = () => {
+      try {
+        ws = new WebSocket(FEED_URL);
+      } catch {
+        return;
+      }
+      ws.onopen = () => {
+        attempt = 0;
+        ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] }));
+      };
+      ws.onmessage = (e) => {
+        let m;
+        try {
+          m = JSON.parse(e.data);
+        } catch {
+          return;
+        }
+        const sp = solPriceRef.current;
+        const tokens = Number(m?.tokenAmount);
+        const solAmt = Number(m?.solAmount);
+        if (!m || m.mint !== mint || !m.signature || !(sp > 0) || !(tokens > 0) || !(solAmt > 0)) return;
+        lastFeedRef.current = Date.now();
+        // same measure GeckoTerminal uses: what the trade paid per token
+        addTickRef.current?.(m.signature, { t: Date.now() / 1000, p: (solAmt / tokens) * sp, v: solAmt * sp });
+      };
+      ws.onclose = () => {
+        if (stopped) return;
+        attempt++;
+        timer = setTimeout(open, Math.min(30000, 1500 * 2 ** Math.min(attempt, 5)));
+      };
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch {}
+      };
+    };
+    open();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      if (ws) {
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch {}
+      }
+    };
+  }, [seconds, mint]);
 
   // your trades: bubbles follow the chart as it scrolls and rescales
   const shownFills = fills.filter((f) => (f.side === 'buy' || f.side === 'sell') && f.tokens && f.sol).slice(-MAX_FILLS);
