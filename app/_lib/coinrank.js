@@ -128,6 +128,16 @@ export function hasHolders(c) {
   return (n(c?.holders) || 0) >= 10 || (n(c?.traders1h) || 0) >= 8 || (n(c?.buys1h) || 0) >= 10;
 }
 
+// Pools made to look big: a market cap in the millions held by a few dozen
+// wallets, or heavy volume from a handful of traders (wash trading).
+export function looksFake(c) {
+  const holders = n(c?.holders);
+  const mc = n(c?.mc);
+  if (holders !== null && holders < 300 && mc > 0 && mc / Math.max(1, holders) > 20000) return true;
+  const traders = n(c?.traders1h);
+  return traders !== null && traders < 5 && (n(c?.vol1h) || 0) >= 5000;
+}
+
 // trading right now, even a little (a launch's own first buy doesn't count)
 export function isAlive(c, now = Date.now()) {
   if (c?.lastTradeAt && now - c.lastTradeAt < HOUR && (!c.createdAt || c.lastTradeAt - c.createdAt > 2 * 60000)) return true;
@@ -140,12 +150,13 @@ export function isAlive(c, now = Date.now()) {
 // launched in the last hour and already has holders
 export function isFresh(c, now = Date.now()) {
   const a = ageMinutes(c, now);
-  return a !== null && a <= 60 && hasHolders(c);
+  return a !== null && a <= 60 && hasHolders(c) && !looksFake(c);
 }
 
 // coins that look like someone actually trades them (fake pools show a big
 // market cap with no volume and almost no holders)
 export function isReal(c) {
+  if (looksFake(c)) return false;
   return (n(c?.vol24h) || 0) >= 1000 || (n(c?.holders) || 0) >= 200 || !!c?.verified;
 }
 
@@ -164,7 +175,7 @@ const activity = (c) => lg(c.vol1h ?? (n(c.vol24h) !== null ? n(c.vol24h) / 24 :
 const realness = (c) => lg(c.vol24h) + 0.5 * lg(c.holders) + 0.25 * lg(c.liq) + (c.verified ? 1 : 0);
 
 function bestKey(c, now) {
-  const alive = isAlive(c, now);
+  const alive = isAlive(c, now) && !looksFake(c);
   const a = ageMinutes(c, now);
   const recent = a !== null && a * 60000 <= RECENT_MS;
   if (alive && recent) return [0, activity(c) + headStart(c, now)];

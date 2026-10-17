@@ -3,7 +3,6 @@
 //   Jupiter         any Solana coin, with holders and the last hour's trading
 //   DexScreener     established coins and their pools
 //   GeckoTerminal   pools by name, bonding curve included
-//   pump.fun        pump.fun coins by name, newest or most recently traded
 //   our coin lists  pump.fun coins trading right now (shared and cached)
 // Whatever answers in time is merged into one entry per coin, coins missing
 // holder counts are filled in from Jupiter, and the list is ordered by
@@ -183,32 +182,6 @@ async function searchGecko(q) {
   return poolRows(j).map(fromPoolRow).filter(Boolean);
 }
 
-async function searchPump(q, sort) {
-  // the newest launches by name (the other sources cover the established coins)
-  const order = sort === 'mc' ? 'market_cap' : 'created_timestamp';
-  const j = await getJson(
-    `https://frontend-api-v3.pump.fun/coins/search?offset=0&limit=50&sort=${order}&includeNsfw=false&order=DESC&searchTerm=${encodeURIComponent(q)}`,
-    { ms: 2000, ttl: 15 }
-  );
-  const list = Array.isArray(j) ? j : Array.isArray(j?.coins) ? j.coins : Array.isArray(j?.data) ? j.data : [];
-  return list
-    .map((c) => {
-      if (!c?.mint || !B58.test(c.mint)) return null;
-      return {
-        mint: c.mint,
-        name: text(c.name, 60),
-        symbol: text(c.symbol, 24),
-        image: img(c.image_uri),
-        mc: num(c.usd_market_cap),
-        createdAt: time(c.created_timestamp),
-        lastTradeAt: time(c.last_trade_timestamp),
-        curve: c.complete === true ? false : c.complete === false ? true : null,
-        dex: c.complete === true ? 'pumpswap' : c.complete === false ? 'pumpfun' : null,
-      };
-    })
-    .filter(Boolean);
-}
-
 // the pump.fun coins on Discover and Pulse right now (cached upstream calls)
 async function searchLists(q, fuzzy) {
   const { lists } = await buildLists(new Set(['curve', 'new', 'final', 'migrated']));
@@ -298,14 +271,13 @@ export async function GET(req) {
   if (q.length < 2) return Response.json({ results: [] });
 
   const t0 = Date.now();
-  const names = ['jupiter', 'dexscreener', 'geckoterminal', 'pumpfun', 'lists'];
+  const names = ['jupiter', 'dexscreener', 'geckoterminal', 'lists'];
   const took = {};
   const timed = (name, p) => p.finally(() => (took[name] = Date.now() - t0));
   const jobs = [
     timed('jupiter', searchJupiter(q)),
     timed('dexscreener', searchDexScreener(q)),
     timed('geckoterminal', q.length >= 3 ? searchGecko(q) : Promise.resolve([])),
-    timed('pumpfun', searchPump(q, sort)),
     timed('lists', within(searchLists(q, fuzzy), SOURCE_MS)),
   ];
   const settled = await Promise.allSettled(jobs);
@@ -316,7 +288,7 @@ export async function GET(req) {
     return s.status === 'fulfilled' ? s.value : [];
   });
   // the lists can come back empty without failing, so they don't count here
-  if (groups.every((g) => !g.length) && settled.slice(0, 4).every((s) => s.status === 'rejected')) {
+  if (groups.every((g) => !g.length) && settled.slice(0, 3).every((s) => s.status === 'rejected')) {
     return Response.json({ results: [], sources, error: 'Search is unavailable right now' }, { status: 502, headers: { 'cache-control': 'no-store' } });
   }
 
