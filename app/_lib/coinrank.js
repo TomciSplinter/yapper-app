@@ -138,8 +138,10 @@ export function looksFake(c) {
   return traders !== null && traders < 5 && (n(c?.vol1h) || 0) >= 5000;
 }
 
-// trading right now, even a little (a launch's own first buy doesn't count)
+// trading right now, even a little (a launch's own first buy doesn't count,
+// and neither does a coin nobody holds any more)
 export function isAlive(c, now = Date.now()) {
+  if (n(c?.holders) !== null && n(c.holders) < 5) return false;
   if (c?.lastTradeAt && now - c.lastTradeAt < HOUR && (!c.createdAt || c.lastTradeAt - c.createdAt > 2 * 60000)) return true;
   if (n(c?.vol1h) !== null || n(c?.trades1h) !== null || n(c?.traders1h) !== null) {
     return (n(c.vol1h) || 0) >= 50 || (n(c.trades1h) || 0) >= 5 || (n(c.traders1h) || 0) >= 3;
