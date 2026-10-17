@@ -122,9 +122,11 @@ export async function rpcBatchSettled(calls) {
 }
 
 // Confirmed transactions by signature (10 per request); missing ones are left out.
-export async function getTransactions(sigs) {
+// gapMs spaces the requests out for long backfills (RPC rate limits).
+export async function getTransactions(sigs, { gapMs = 0 } = {}) {
   const out = new Map();
   for (let i = 0; i < sigs.length; i += 10) {
+    if (i && gapMs) await new Promise((r) => setTimeout(r, gapMs));
     const chunk = sigs.slice(i, i + 10);
     const res = await rpcBatchSettled(
       chunk.map((s) => ['getTransaction', [s, { encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]])

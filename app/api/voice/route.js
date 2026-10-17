@@ -1,14 +1,18 @@
-// Voice commands: audio (or typed text) in, a structured command out.
-// 1. Speech to text with OpenAI transcription.
-// 2. An OpenAI model turns the words plus what's on screen into a command
-//    (buy, sell, open a coin, answer a question...). Trades are never executed
-//    here: the browser always shows a confirm step first.
+// Voice commands: audio (or typed / hands-free text) in, one structured command out.
+// 1. Speech to text with OpenAI transcription (skipped when text is sent).
+// 2. An OpenAI model turns the words, what's on screen, the user's positions,
+//    orders and the coin lists into a command (buy, sell, set an order, scan
+//    for coins, answer a question...). Nothing is executed here: the browser
+//    shows a confirm step before anything that spends or sells.
+
+import { SCHEMA, SYSTEM, clean } from './command';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const OPENAI = 'https://api.openai.com/v1';
 const MAX_AUDIO = 4 * 1024 * 1024;
+const MAX_CONTEXT = 60000;
 
 // light per-instance rate limit so nobody can burn the OpenAI key
 const hits = new Map();
@@ -18,42 +22,8 @@ function limited(ip) {
   list.push(now);
   hits.set(ip, list);
   if (hits.size > 5000) hits.clear();
-  return list.length > 20;
+  return list.length > 30;
 }
-
-const SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['action', 'coin', 'coin_is_current', 'amount_sol', 'amount_usd', 'percent', 'target', 'reply', 'lang'],
-  properties: {
-    action: { type: 'string', enum: ['buy', 'sell', 'open', 'ask', 'confirm', 'cancel', 'navigate', 'unknown'] },
-    coin: { type: ['string', 'null'], description: 'Coin name, ticker or contract address as the user said it. Null when they mean the coin on screen.' },
-    coin_is_current: { type: 'boolean', description: 'True when the user refers to the coin already open (this, it, current one) or names it.' },
-    amount_sol: { type: ['number', 'null'] },
-    amount_usd: { type: ['number', 'null'] },
-    percent: { type: ['number', 'null'], description: 'For sells: percent of holdings, 1-100.' },
-    target: { type: ['string', 'null'], enum: ['discover', 'pulse', 'positions', null] },
-    reply: { type: 'string', description: 'Short reply to show and speak, at most 2 sentences.' },
-    lang: { type: 'string', description: 'Two-letter ISO 639-1 code of the language the reply is written in, e.g. en, hu, es.' },
-  },
-};
-
-const SYSTEM = `You are Yapper, the voice assistant inside a Solana memecoin trading terminal.
-Turn what the user said into one command. The context JSON describes what is on screen right now.
-
-Actions:
-- buy: user wants to buy. Amounts are SOL unless they say dollars/usd/bucks (then amount_usd). "half a sol" = 0.5, "a tenth" = 0.1. "ape 1" = buy 1 SOL.
-- sell: user wants to sell. "sell half" = percent 50, "sell all/everything/dump it" = 100, "sell a quarter" = 25. If no amount is given, leave percent null and ask how much in reply.
-- open: user wants to see/look at/pull up a coin.
-- ask: a question about the market, a coin, their position or balance. Answer in reply using ONLY numbers from the context. If the data is not there, say you don't have it. Do not invent numbers. No financial advice or predictions; you may describe what the data shows.
-- confirm: user approves a pending trade (yes, confirm, do it, send it, go). Only when context.pending_trade is not null.
-- cancel: user rejects a pending trade or says stop/never mind.
-- navigate: go to "discover" (trending/home), "pulse" (new pairs, new coins, final stretch, about to graduate, migrated, pulse) or "positions" (portfolio/my coins/bags). Set target.
-- unknown: anything else; reply with a short example of what they can say.
-
-Coins: if the user says this/it/the coin, or names the coin that is on screen, set coin_is_current true and coin null. Otherwise put the coin as they said it in coin (fix obvious speech-to-text spelling of tickers, e.g. "bonk" -> "BONK", "wiff" -> "WIF").
-For buy/sell, the reply restates the trade and asks to confirm, e.g. "Buy 0.5 SOL of BONK? Say yes or tap confirm."
-Keep replies short, plain and spoken-friendly: round big numbers (38.6 million, not 38,560,000). Reply in the language the user spoke.`;
 
 async function transcribe(key, audio, hint) {
   const models = [process.env.OPENAI_TRANSCRIBE_MODEL, 'gpt-4o-mini-transcribe', 'whisper-1'].filter(Boolean);
@@ -64,7 +34,10 @@ async function transcribe(key, audio, hint) {
     const fd = new FormData();
     fd.append('file', audio, `voice.${ext}`);
     fd.append('model', model);
-    fd.append('prompt', `Solana memecoin trading commands. Words like SOL, buy, sell, ape, dump, market cap, pump.fun, ticker.${hint ? ` Coin on screen: ${hint}.` : ''}`);
+    fd.append(
+      'prompt',
+      `Solana memecoin trading commands. Words like SOL, buy, sell, ape, dump, market cap, take profit, stop loss, limit order, pump.fun, PumpSwap, ticker, Yapper.${hint ? ` Coin on screen: ${hint}.` : ''}`
+    );
     const r = await fetch(`${OPENAI}/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd });
     const j = await r.json().catch(() => ({}));
     if (r.ok && typeof j.text === 'string') return j.text.trim();
@@ -74,8 +47,8 @@ async function transcribe(key, audio, hint) {
   throw new Error(lastErr);
 }
 
-async function understand(key, transcript, context) {
-  const models = [process.env.OPENAI_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-5-mini'].filter(Boolean);
+async function understand(key, transcript, context, history) {
+  const models = [process.env.OPENAI_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini'].filter(Boolean);
   let lastErr = 'Could not understand the command';
   for (const model of [...new Set(models)]) {
     const r = await fetch(`${OPENAI}/chat/completions`, {
@@ -85,10 +58,10 @@ async function understand(key, transcript, context) {
         model,
         messages: [
           { role: 'system', content: SYSTEM },
-          { role: 'user', content: JSON.stringify({ said: transcript, context }) },
+          { role: 'user', content: JSON.stringify({ said: transcript, context, history }) },
         ],
         response_format: { type: 'json_schema', json_schema: { name: 'yapper_command', strict: true, schema: SCHEMA } },
-        max_completion_tokens: 1200,
+        max_completion_tokens: 1500,
       }),
     });
     const j = await r.json().catch(() => ({}));
@@ -106,19 +79,30 @@ async function understand(key, transcript, context) {
   throw new Error(lastErr);
 }
 
-function clean(cmd) {
-  const num = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) && v > lo && v <= hi ? v : null);
-  return {
-    action: cmd?.action || 'unknown',
-    coin: typeof cmd?.coin === 'string' && cmd.coin.trim() ? cmd.coin.trim().slice(0, 64) : null,
-    coin_is_current: !!cmd?.coin_is_current,
-    amount_sol: num(cmd?.amount_sol, 0, 1000),
-    amount_usd: num(cmd?.amount_usd, 0, 1e7),
-    percent: num(cmd?.percent, 0, 100),
-    target: ['discover', 'pulse', 'positions'].includes(cmd?.target) ? cmd.target : null,
-    reply: String(cmd?.reply || '').slice(0, 400),
-    lang: /^[a-z]{2}$/.test(String(cmd?.lang || '').toLowerCase()) ? String(cmd.lang).toLowerCase() : 'en',
-  };
+// keep the request small: drop the biggest optional parts first
+function fit(context) {
+  const size = (v) => JSON.stringify(v).length;
+  if (size(context) <= MAX_CONTEXT) return context;
+  const c = { ...context };
+  for (const k of ['lists', 'portfolio', 'orders']) {
+    if (size(c) <= MAX_CONTEXT) break;
+    delete c[k];
+  }
+  if (c.coin && size(c) > MAX_CONTEXT) c.coin = { ...c.coin, recent_trades: undefined, largest_holders: undefined };
+  return size(c) <= MAX_CONTEXT ? c : {};
+}
+
+function cleanHistory(h) {
+  if (!Array.isArray(h)) return [];
+  return h.slice(-6).map((t) => ({
+    said: String(t?.said || '').slice(0, 200),
+    reply: String(t?.reply || '').slice(0, 400),
+    action: String(t?.action || '').slice(0, 20),
+    coin: t?.coin && typeof t.coin === 'object' ? { mint: String(t.coin.mint || '').slice(0, 44), symbol: String(t.coin.symbol || '').slice(0, 16) } : null,
+    listed: Array.isArray(t?.listed)
+      ? t.listed.slice(0, 10).map((x, i) => ({ n: i + 1, mint: String(x?.mint || '').slice(0, 44), symbol: String(x?.symbol || '').slice(0, 16) }))
+      : [],
+  }));
 }
 
 export async function POST(req) {
@@ -136,10 +120,14 @@ export async function POST(req) {
   }
 
   let context = {};
+  let history = [];
   try {
     context = JSON.parse(String(form.get('context') || '{}'));
   } catch {}
-  if (JSON.stringify(context).length > 12000) context = {};
+  try {
+    history = cleanHistory(JSON.parse(String(form.get('history') || '[]')));
+  } catch {}
+  context = fit(context && typeof context === 'object' ? context : {});
 
   let transcript = String(form.get('text') || '').trim().slice(0, 300);
   const audio = form.get('audio');
@@ -150,7 +138,7 @@ export async function POST(req) {
       transcript = await transcribe(key, audio, context?.coin?.symbol);
     }
     if (!transcript) return Response.json({ error: "I didn't catch that. Try again." }, { status: 400 });
-    const command = clean(await understand(key, transcript, context));
+    const command = clean(await understand(key, transcript, context, history));
     return Response.json({ transcript, command });
   } catch (e) {
     return Response.json({ error: String(e?.message || 'Voice failed').slice(0, 200), transcript }, { status: 502 });

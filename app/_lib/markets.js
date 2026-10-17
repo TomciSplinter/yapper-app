@@ -5,7 +5,8 @@
 
 import { rpc, rpcBatchSettled, SOL_MINT, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
 import { readTokenAccount, readMintDecimals, toUi, ataAddress } from './holdings';
-import { knownMints, knownAccounts, scanWallet } from './known';
+import { knownMints, knownAccounts } from './known';
+import { scanWallet } from './history';
 
 const DS = 'https://api.dexscreener.com';
 const GT = 'https://api.geckoterminal.com/api/v2/networks/solana';
@@ -285,4 +286,33 @@ export async function loadPositions(wallet) {
   }
   rows.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   return rows;
+}
+
+/* ---------- trades (GeckoTerminal) ---------- */
+
+// GeckoTerminal trades -> { id, tx, maker, time, side, tokenAmt, quoteAmt, quoteIsSol, priceUsd, usd }, newest first
+export function parseTrades(data, mint) {
+  const out = [];
+  for (const d of Array.isArray(data) ? data : []) {
+    const a = d?.attributes;
+    if (!a) continue;
+    let side;
+    if (a.to_token_address === mint) side = 'buy';
+    else if (a.from_token_address === mint) side = 'sell';
+    else side = a.kind === 'sell' ? 'sell' : 'buy';
+    const isBuy = side === 'buy';
+    out.push({
+      id: d.id || a.tx_hash,
+      tx: a.tx_hash,
+      maker: a.tx_from_address || null,
+      time: Date.parse(a.block_timestamp),
+      side,
+      tokenAmt: Number(isBuy ? a.to_token_amount : a.from_token_amount),
+      quoteAmt: Number(isBuy ? a.from_token_amount : a.to_token_amount),
+      quoteIsSol: (isBuy ? a.from_token_address : a.to_token_address) === SOL_MINT,
+      priceUsd: Number(isBuy ? a.price_to_in_usd : a.price_from_in_usd),
+      usd: Number(a.volume_in_usd),
+    });
+  }
+  return out.sort((x, y) => (y.time || 0) - (x.time || 0));
 }

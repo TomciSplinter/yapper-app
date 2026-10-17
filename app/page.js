@@ -10,6 +10,7 @@ import DataTabs from './_components/DataTabs';
 import Discover from './_components/Discover';
 import Pulse from './_components/Pulse';
 import Positions from './_components/Positions';
+import { OrdersSection } from './_components/Orders';
 import StatusBar from './_components/StatusBar';
 import Toasts from './_components/Toasts';
 import VoiceDock from './_components/VoiceDock';
@@ -30,6 +31,8 @@ import { fetchPair, fetchSolPrice } from './_lib/markets';
 import { executeTrade } from './_lib/trade';
 import { loadHolding } from './_lib/holdings';
 import { useFills, summarize } from './_lib/fills';
+import { startOrderEngine, useOrders, isLive } from './_lib/orders';
+import { createCallouts } from './_lib/callouts';
 import { useHolders, useToasts } from './_lib/hooks';
 import { usd, sol, age, dexLabel } from './_lib/format';
 
@@ -323,6 +326,39 @@ export default function App() {
   };
   const getContext = useCallback(() => ctxRef.current, []);
 
+  // raw inputs the orb gathers more data from while you speak
+  const inputsRef = useRef({});
+  inputsRef.current = {
+    wallet,
+    mint: view === 'token' ? mint : null,
+    pairAddress: pair?.pairAddress || null,
+    supply,
+    solPrice,
+    holderOwners: (holders?.rows || [])
+      .filter((h) => !h.kind)
+      .slice(0, 10)
+      .map((h) => h.owner)
+      .filter(Boolean),
+  };
+  const getInputs = useCallback(() => inputsRef.current, []);
+
+  // limit orders, alerts, take profit / stop loss and callouts run in one tab
+  const engineRef = useRef({});
+  engineRef.current = { toast, onTraded, solPrice, wallet };
+  useEffect(() => {
+    const callouts = createCallouts({ getWallet: () => engineRef.current.wallet, getSolPrice: () => engineRef.current.solPrice });
+    return startOrderEngine({
+      getToast: () => engineRef.current.toast,
+      getOnTraded: () => engineRef.current.onTraded,
+      getSolPrice: () => engineRef.current.solPrice,
+      extraMints: callouts.mints,
+      onQuotes: callouts.check,
+      watchEvery: () => 10000,
+    });
+  }, []);
+  const orders = useOrders();
+  const coinOrders = view === 'token' && mint ? orders.filter((o) => isLive(o) && o.mint === mint && (o.type === 'alert' || o.wallet === wallet)) : [];
+
   return (
     <div className="app">
       <TopBar
@@ -354,6 +390,7 @@ export default function App() {
             </header>
             <div className="view-body">
               <Positions wallet={wallet} refreshKey={balTick} onOpenToken={openToken} onConnect={connect} solPrice={solPrice} />
+              <OrdersSection orders={orders.filter((o) => o.type === 'alert' || !wallet || o.wallet === wallet)} onOpenToken={openToken} />
             </div>
           </section>
         )}
@@ -376,6 +413,7 @@ export default function App() {
                       fills={fills}
                       avgEntryUsd={position && position.held > 0 && solPrice ? position.avgEntry * solPrice : null}
                       solPrice={solPrice}
+                      orders={coinOrders}
                     />
                   ) : (
                     <div className="pc-note">Loading chart…</div>
@@ -409,6 +447,7 @@ export default function App() {
                   onConnect={connect}
                   onTraded={onTraded}
                   toast={toast}
+                  orders={coinOrders}
                 />
                 <TokenFacts pair={pair} holders={holders} />
               </aside>
@@ -422,6 +461,8 @@ export default function App() {
         voice={
           <VoiceDock
             getContext={getContext}
+            getInputs={getInputs}
+            onQuickBuy={quickBuy}
             openToken={openToken}
             navigate={(v) => go(v)}
             wallet={wallet}

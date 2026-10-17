@@ -10,7 +10,8 @@
 
 import { PublicKey } from '@solana/web3.js';
 import { rpcBatchSettled, b64ToBytes, TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from './chain';
-import { knownAccounts, scanWallet } from './known';
+import { knownAccounts } from './known';
+import { scanWallet } from './history';
 
 export const ATA_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAMS = new Set([TOKEN_PROGRAM, TOKEN_2022_PROGRAM]);
@@ -85,8 +86,8 @@ export async function loadHolding(wallet, mint) {
   // Nothing found: the coin may sit in an account the RPC's index doesn't
   // list. Check the wallet's recent transactions for where it went.
   if (!found.size) {
-    const learned = await scanWallet(wallet).catch(() => []);
-    const extra = learned.includes(mint) ? knownAccounts(wallet, mint).filter((a) => !direct.includes(a)) : [];
+    await scanWallet(wallet).catch(() => []);
+    const extra = knownAccounts(wallet, mint).filter((a) => !direct.includes(a));
     if (extra.length) {
       const r = await rpcBatchSettled([['getMultipleAccounts', [extra, cfg]]]).catch(() => [{ ok: false }]);
       if (r[0].ok) {

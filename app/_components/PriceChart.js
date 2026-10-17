@@ -78,7 +78,7 @@ function snapTime(times, t, sec) {
 
 const MAX_FILLS = 60;
 
-export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl, livePrice, fills = [], avgEntryUsd = null, solPrice = null }) {
+export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl, livePrice, fills = [], avgEntryUsd = null, solPrice = null, orders = [] }) {
   const box = useRef(null);
   const avatarRef = useRef(null);
   const chartRef = useRef(null);
@@ -92,6 +92,7 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
   const fillEls = useRef(new Map()); // sig -> bubble element
   const fillData = useRef({ fills: [], mult: 1, solPrice: null, sec: 60 });
   const entryLineRef = useRef(null);
+  const orderLinesRef = useRef([]);
 
   const [frame, setFrame] = useState(FRAMES[0]);
   const [mode, setMode] = useState('mcap'); // 'mcap' | 'price'
@@ -424,6 +425,31 @@ export default function PriceChart({ mint, pairAddress, supply, symbol, imageUrl
       title: 'Avg entry',
     });
   }, [avgEntryUsd, mult, chartReady]);
+
+  // open orders and alerts as lines at their trigger
+  const orderKey = orders.map((o) => `${o.id}:${o.targetMc}:${o.status}`).join('|');
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!chartReady || !series) return;
+    for (const l of orderLinesRef.current) {
+      try {
+        series.removePriceLine(l);
+      } catch {}
+    }
+    orderLinesRef.current = [];
+    if (!(sup > 0)) return;
+    for (const o of orders) {
+      const v = useMcap ? o.targetMc : o.targetMc / sup;
+      if (!(v > 0)) continue;
+      const kind = o.type === 'alert' ? 'alert' : o.type === 'buy' ? 'buy' : o.dir === 'above' ? 'tp' : 'sl';
+      const color = { alert: '#F5B74E', buy: '#00F5A8', tp: '#00F5A8', sl: '#FF5C74' }[kind];
+      const title = { alert: 'Alert', buy: `Limit buy ${o.amountSol}`, tp: `TP ${o.percent}%`, sl: `SL ${o.percent}%` }[kind];
+      orderLinesRef.current.push(
+        series.createPriceLine({ price: v, color, lineWidth: 1, lineStyle: kind === 'alert' ? 1 : 2, axisLabelVisible: true, title })
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderKey, chartReady, useMcap, sup]);
 
   const fmtV = (v) => (useMcap ? usd(v) : fmtPrice(v));
   const dir = legend && legend.close >= legend.open ? 'up' : 'down';

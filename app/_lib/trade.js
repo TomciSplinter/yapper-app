@@ -9,6 +9,8 @@ import { ensureUnlocked, getState, signAs, signerKind } from './wallets';
 import { checkTrade } from './guard';
 import { recordTrade } from './fills';
 import { rememberCoin } from './known';
+import { announce, getPrefs } from './voicebus';
+import { amount as fmtAmount, sol as fmtSol } from './format';
 
 const SETTINGS_KEY = 'yapper:trade-settings';
 const DEFAULTS = { slippage: '10', prioFee: '0.0005', buyAmt: '0.1' };
@@ -37,8 +39,19 @@ function cleanPrioFee(v) {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 0.01) : Number(DEFAULTS.prioFee);
 }
 
+// Say what a finished trade did ("Bought 1.8M QUENTRA for 0.1 SOL").
+function speakFill(fill, { isBuy, sym, percent }) {
+  const p = getPrefs();
+  if (p.muted || !p.speakTrades || !fill || !(Math.abs(fill.tokens) > 0)) return;
+  const text = isBuy
+    ? `Bought ${fmtAmount(Math.abs(fill.tokens))} ${sym} for ${fmtSol(Math.abs(fill.sol))} SOL.`
+    : `Sold ${percent ? `${percent}% of your ` : ''}${sym} for ${fmtSol(Math.abs(fill.sol))} SOL.`;
+  announce({ kind: 'trade', text, mint: fill.mint, symbol: sym, quiet: true });
+}
+
 // side: 'buy' | 'sell'. Buys use amountSol, sells use percent (1-100).
-// Returns 'ok' | 'failed' | 'pending' | 'cancelled' | 'error'.
+// Returns { status: 'ok' | 'failed' | 'pending' | 'cancelled' | 'error', sig, error, fill }
+// where `fill` is a promise for the trade as read back from the chain (or null).
 export async function executeTrade({ wallet, mint, side, amountSol, percent, symbol, slippage, prioFee, toast, onTraded, receiveHint }) {
   const isBuy = side === 'buy';
   const sym = symbol || 'this coin';
@@ -48,6 +61,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
   const kind = signerKind(wallet);
   const local = kind === 'local';
 
+  let sending = false; // past this point the trade may have reached the chain
   const id = toast.show({
     kind: 'pending',
     title: isBuy ? `Buying ${sym}` : `Selling ${sym}`,
@@ -85,6 +99,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
     const signed = await signAs(wallet, tx, kind);
 
     toast.update(id, { detail: 'Sending to Solana' });
+    sending = true;
     const sig = await rpc('sendTransaction', [
       bytesToB64(signed.serialize()),
       // built-in wallets just simulated it in checkTrade, so skip the second simulation
@@ -98,10 +113,10 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
     if (ok === true) {
       // read the confirmed trade from the chain: feeds avg entry, PnL and chart
       // markers, and catches the rare case where the coins didn't land here
-      recordTrade(wallet, mint, sig)
-        .then((fill) => {
+      const fill = recordTrade(wallet, mint, sig)
+        .then((f) => {
           onTraded?.();
-          if (fill && isBuy && !(fill.tokens > 0)) {
+          if (f && isBuy && !(f.tokens > 0)) {
             toast.show({
               kind: 'error',
               title: `The ${sym} buy confirmed, but no coins arrived in this wallet`,
@@ -109,9 +124,12 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
               sig,
               autoClose: 30000,
             });
+          } else if (f) {
+            speakFill(f, { isBuy, sym, percent });
           }
+          return f;
         })
-        .catch(() => {});
+        .catch(() => null);
       toast.update(id, {
         kind: 'success',
         title: isBuy ? `Bought ${sym}` : `Sold ${percent}% of ${sym}`,
@@ -119,7 +137,10 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
         sig,
         autoClose: 8000,
       });
-      return 'ok';
+      try {
+        window.dispatchEvent(new CustomEvent('yapper:traded', { detail: { wallet, mint, side, percent: isBuy ? null : Number(percent) } }));
+      } catch {}
+      return { status: 'ok', sig, fill };
     }
     if (ok === false) {
       toast.update(id, {
@@ -129,7 +150,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
         sig,
         autoClose: 15000,
       });
-      return 'failed';
+      return { status: 'failed', sig, error: 'The price moved past the slippage limit', fill: Promise.resolve(null) };
     }
     toast.update(id, {
       kind: 'pending',
@@ -138,7 +159,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
       sig,
       autoClose: 15000,
     });
-    return 'pending';
+    return { status: 'pending', sig, fill: Promise.resolve(null) };
   } catch (e) {
     const msg = String(e?.message || e);
     const cancelled = /reject|denied|cancel/i.test(msg);
@@ -148,6 +169,6 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
       detail: cancelled ? null : msg.slice(0, 180),
       autoClose: cancelled ? 4000 : 12000,
     });
-    return cancelled ? 'cancelled' : 'error';
+    return { status: cancelled ? 'cancelled' : 'error', error: msg.slice(0, 180), maybeSent: sending && !cancelled && /Network error|Solana RPC error \(/.test(msg), fill: Promise.resolve(null) };
   }
 }

@@ -1072,6 +1072,175 @@ p {
   color: var(--warn);
 }
 
+/* market / limit, take profit / stop loss */
+.tp-modes {
+  display: flex;
+  gap: 14px;
+  margin-top: -2px;
+  border-bottom: 1px solid var(--rule);
+}
+.tp-modes > button {
+  height: 30px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tp-modes > button:hover {
+  color: var(--ink);
+}
+.tp-modes > button.on {
+  color: var(--ink);
+  border-bottom-color: var(--mint);
+}
+.tp-limit {
+  display: grid;
+  gap: 8px;
+}
+.field-sm {
+  height: 40px;
+}
+.field-sm input {
+  font-size: 15px;
+}
+.presets-sm button {
+  height: 26px;
+}
+.tp-hint {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.tp-hint.muted {
+  color: var(--ink-3);
+}
+.tp-bracket {
+  display: grid;
+  gap: 8px;
+}
+.tp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.tp-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--mint);
+}
+.tp-orders {
+  display: grid;
+  gap: 6px;
+}
+
+/* open orders and alerts */
+.ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 4px 4px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--raise);
+  font-size: 12px;
+}
+.ol-row.done {
+  opacity: 0.6;
+}
+.ol-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ol-tag.buy,
+.ol-tag.tp {
+  color: var(--up);
+  background: rgba(0, 245, 168, 0.1);
+}
+.ol-tag.sl {
+  color: var(--down);
+  background: rgba(255, 92, 116, 0.1);
+}
+.ol-tag.alert {
+  color: var(--warn);
+  background: rgba(245, 183, 78, 0.1);
+}
+.ol-coin {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 120px;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ol-coin:hover {
+  color: var(--mint);
+}
+.ol-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ol-meta {
+  flex: none;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.ol-x {
+  flex: none;
+  width: 26px;
+}
+.os {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+}
+.os-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.os-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.os-head .muted {
+  font-size: 12px;
+}
+.os-done summary {
+  margin-bottom: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* your position: bought / sold / holding / PnL */
 .tp-pos {
   display: grid;
@@ -1514,6 +1683,24 @@ p {
   background: radial-gradient(closest-side, rgba(0, 245, 168, 0.4), rgba(0, 245, 168, 0));
   animation: orb-breathe 4.5s ease-in-out infinite;
 }
+.orb.speaking::before {
+  inset: -8px;
+  animation: orb-breathe 0.7s ease-in-out infinite;
+}
+.orb.handsfree:not(.listening)::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(0, 245, 168, 0.45);
+  animation: orb-spin 12s linear infinite;
+  pointer-events: none;
+}
+@keyframes orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .orb:not(.listening):hover img {
   transform: scale(1.05);
 }
@@ -1704,6 +1891,180 @@ p {
 }
 .vp-form .btn {
   height: 36px;
+}
+.vp {
+  max-height: calc(100dvh - var(--status) - 90px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.vp-tools .icon-btn.on {
+  color: var(--ink);
+  background: var(--raise-2);
+}
+.vp-hf {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 245, 168, 0.35);
+  color: var(--mint);
+  font-size: 11px;
+  font-weight: 600;
+}
+.vp-note {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.vp-extra {
+  justify-self: start;
+  height: 32px;
+  gap: 6px;
+}
+/* coins the orb named: open or quick buy */
+.vp-cards {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vp-cc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--raise);
+}
+.vp-cc-n {
+  width: 14px;
+  color: var(--ink-3);
+  font: 600 11px var(--font-mono), monospace;
+  text-align: center;
+}
+.vp-cc-main {
+  flex: 1;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+}
+.vp-cc-main:hover .vp-cc-sym {
+  color: var(--mint);
+}
+.vp-cc-sym {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.vp-cc-sub {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.vp-cc .btn {
+  gap: 4px;
+}
+/* selling several coins */
+.vp-many {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.vp-many-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.vp-many-sym {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.vp-facts dd.up {
+  color: var(--up);
+}
+.vp-facts dd.down {
+  color: var(--down);
+}
+/* settings */
+.vp-settings {
+  display: grid;
+  gap: 2px;
+}
+.vp-set {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--rule-soft);
+  cursor: pointer;
+}
+.vp-set:last-child {
+  border-bottom: 0;
+}
+.vp-set.off {
+  cursor: default;
+  opacity: 0.55;
+}
+.vp-set-text {
+  display: grid;
+  gap: 2px;
+}
+.vp-set-label {
+  font-weight: 600;
+}
+.vp-set-sub {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.vp-set input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--rule-2);
+  transition: background 0.15s;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink-2);
+  transition: transform 0.15s, background 0.15s;
+}
+.vp-set input:checked + .switch {
+  background: rgba(0, 245, 168, 0.35);
+}
+.vp-set input:checked + .switch::after {
+  transform: translateX(14px);
+  background: var(--mint);
+}
+.vp-set input:focus-visible + .switch {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.sb-voice-set {
+  width: 24px;
+  height: 24px;
+}
+.sb-voice-gear {
+  display: none;
 }
 
 /* ---------- coin lists: shared bits ---------- */
@@ -3191,6 +3552,13 @@ p {
   }
   .sb-voice-note {
     display: none;
+  }
+  .sb-voice-gear {
+    position: absolute;
+    left: calc(100% + 4px);
+    top: 50%;
+    display: inline-grid;
+    transform: translateY(-50%);
   }
   .orb {
     width: 74px;

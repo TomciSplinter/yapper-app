@@ -196,6 +196,37 @@ const PATHS = {
     </>
   ),
   pulse: <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
+  bell: (
+    <>
+      <path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14z" />
+      <path d="M10 20.5a2 2 0 0 0 4 0" />
+    </>
+  ),
+  target: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+    </>
+  ),
+  volume: (
+    <>
+      <path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" />
+      <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />
+    </>
+  ),
+  mute: (
+    <>
+      <path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" />
+      <path d="m16 9.5 5 5M21 9.5l-5 5" />
+    </>
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 16, ...rest }) {

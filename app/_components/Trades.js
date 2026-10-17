@@ -1,37 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { gt, withPool } from '../_lib/markets';
-import { SOL_MINT } from '../_lib/chain';
+import { gt, withPool, parseTrades } from '../_lib/markets';
 import { useNow } from '../_lib/hooks';
 import { usd, price, amount, sol, age, short } from '../_lib/format';
 import { Icon, TableSkeleton } from './Icons';
-
-function parseTrades(data, mint) {
-  const out = [];
-  for (const d of Array.isArray(data) ? data : []) {
-    const a = d?.attributes;
-    if (!a) continue;
-    let side;
-    if (a.to_token_address === mint) side = 'buy';
-    else if (a.from_token_address === mint) side = 'sell';
-    else side = a.kind === 'sell' ? 'sell' : 'buy';
-    const isBuy = side === 'buy';
-    out.push({
-      id: d.id || a.tx_hash,
-      tx: a.tx_hash,
-      maker: a.tx_from_address || null,
-      time: Date.parse(a.block_timestamp),
-      side,
-      tokenAmt: Number(isBuy ? a.to_token_amount : a.from_token_amount),
-      quoteAmt: Number(isBuy ? a.from_token_amount : a.to_token_amount),
-      quoteIsSol: (isBuy ? a.from_token_address : a.to_token_address) === SOL_MINT,
-      priceUsd: Number(isBuy ? a.price_to_in_usd : a.price_from_in_usd),
-      usd: Number(a.volume_in_usd),
-    });
-  }
-  return out.sort((x, y) => (y.time || 0) - (x.time || 0));
-}
 
 export default function Trades({ mint, pairAddress, supply, wallet }) {
   const [rows, setRows] = useState(null);
