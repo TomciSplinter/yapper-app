@@ -195,7 +195,8 @@ export async function waitForConfirm(sig, timeoutMs = 60000, { history = false }
   return null;
 }
 
-// Status of several sent transactions: sig -> 'ok' | 'failed' | 'unknown'
+// Status of several sent transactions:
+//   sig -> 'ok' | 'failed' | 'landing' (in a block, not confirmed yet) | 'unknown' (not seen)
 export async function signatureStates(sigs) {
   const out = new Map();
   const list = [...new Set(sigs.filter(Boolean))];
@@ -204,8 +205,14 @@ export async function signatureStates(sigs) {
     const r = await rpc('getSignatureStatuses', [chunk, { searchTransactionHistory: true }]);
     (r?.value || []).forEach((st, j) => {
       const ok = st && !st.err && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized');
-      out.set(chunk[j], st?.err ? 'failed' : ok ? 'ok' : 'unknown');
+      out.set(chunk[j], st?.err ? 'failed' : ok ? 'ok' : st ? 'landing' : 'unknown');
     });
   }
   return out;
+}
+
+// Can a transaction built on this blockhash still land? false means never.
+export async function blockhashValid(blockhash) {
+  const r = await rpc('isBlockhashValid', [blockhash, { commitment: 'confirmed' }]);
+  return r?.value === true;
 }

@@ -456,9 +456,24 @@ export default function VoiceDock({ getContext, getInputs, openToken, navigate, 
         announce({ kind: 'order', text: `The ${t.symbol} buy is still confirming. I'll set the take profit and stop loss once it lands.`, mint: t.mint, symbol: t.symbol });
       }
       // measured from the price this buy actually got
-      const { made, reason } = await bracketAfterBuy(res, { ...plan, solPrice, source: 'voice', intentId }).catch(() => ({ made: [], reason: 'something went wrong' }));
-      if (!sent) return; // the buy itself failed; its toast says why
+      const { made, reason, handled, later, buyFailed } = await bracketAfterBuy(res, { ...plan, solPrice, source: 'voice', intentId }).catch(() => ({
+        made: [],
+        reason: 'something went wrong',
+      }));
+      if (!sent || handled) return; // the buy itself failed (its toast says why), or another tab is on it
       const what = (o) => `${o.label.toLowerCase()} at ${usd(o.targetMc)}`;
+      if (later || buyFailed) {
+        announce({
+          kind: 'order',
+          text: later
+            ? `The ${t.symbol} buy still hasn't confirmed. I'll set the take profit and stop loss if it goes through.`
+            : `The ${t.symbol} buy failed, so I didn't set a take profit or stop loss.`,
+          mint: t.mint,
+          symbol: t.symbol,
+          toast: { kind: later ? 'info' : 'error', title: later ? 'Buy still confirming' : 'Buy failed', detail: later ? 'Take profit / stop loss will be set if it lands.' : 'No take profit / stop loss was set.' },
+        });
+        return;
+      }
       if (!made.length) {
         announce({
           kind: 'order',

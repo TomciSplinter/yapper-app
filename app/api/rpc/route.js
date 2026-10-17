@@ -6,6 +6,7 @@ const ALLOWED = new Set([
   'getBalance',
   'getLatestBlockhash',
   'getSignatureStatuses',
+  'isBlockhashValid',
   'getTokenAccountsByOwner',
   'getParsedTokenAccountsByOwner',
   'getTokenAccountBalance',

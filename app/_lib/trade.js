@@ -56,8 +56,9 @@ function speakFill(fill, { isBuy, sym, percent }) {
 //   pending   sent, but not confirmed yet (may still land; check `sig` later)
 //   cancelled the user said no (wallet popup or unlock)
 //   error     never sent (nothing can have happened)
-// beforeSend(sig) runs right before the signed transaction goes out (sig is
-// its id); returning false stops it there, with nothing sent.
+// beforeSend(sig, { blockhash }) runs right before the signed transaction goes
+// out (sig is its id; once the blockhash expires it can never land); returning
+// false stops it there, with nothing sent.
 export async function executeTrade({ wallet, mint, side, amountSol, percent, symbol, slippage, prioFee, toast, onTraded, receiveHint, beforeSend }) {
   const isBuy = side === 'buy';
   const sym = symbol || 'this coin';
@@ -164,7 +165,7 @@ export async function executeTrade({ wallet, mint, side, amountSol, percent, sym
     // the signature is the transaction's id: known before it's sent
     sig = b58encode(signed.signatures[0]);
 
-    if (beforeSend && beforeSend(sig) === false) throw new Error('Cancelled before sending');
+    if (beforeSend && beforeSend(sig, { blockhash: signed.message?.recentBlockhash || tx.message?.recentBlockhash || null }) === false) throw new Error('Cancelled before sending');
     toast.update(id, { detail: 'Sending to Solana' });
     stage = 'send';
     rememberCoin(wallet, mint); // balance reads check this coin's accounts directly from now on

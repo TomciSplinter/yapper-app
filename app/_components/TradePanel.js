@@ -121,14 +121,14 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
     if (Math.abs(targetMc / mcNow - 1) < 0.005) return setError('That is the current market cap. Use Market to trade now.');
     let held = null;
     if (!isBuy) {
-      held = tokenBal;
-      if (!(held > 0)) {
-        try {
-          held = (await loadHolding(wallet, mint)).amount;
-        } catch {
-          return setError(`Couldn't read your ${sym} balance. Try again in a moment.`);
-        }
-      }
+      // read it fresh: the balance on screen can lag a buy you just made, and
+      // the order never sells more than the position it's made for
+      let fresh = null;
+      try {
+        fresh = (await loadHolding(wallet, mint)).amount;
+      } catch {}
+      held = Math.max(fresh || 0, tokenBal || 0);
+      if (fresh === null && !(held > 0)) return setError(`Couldn't read your ${sym} balance. Try again in a moment.`);
       if (!(held > 0)) return setError(`You don't hold any ${sym}.`);
     } else if (solBal !== null && buyNum > solBal) {
       const fresh = await rpc('getBalance', [wallet, { commitment: 'confirmed' }])
@@ -223,9 +223,12 @@ export default function TradePanel({ mint, pair, side, onSideChange, wallet, sol
       if (intentId) {
         const sent = res.status === 'ok' || res.status === 'pending';
         bracketAfterBuy(res, { ...plan, solPrice, source: 'panel', intentId })
-          .then(({ made, reason }) => {
+          .then(({ made, reason, handled, later, buyFailed }) => {
+            if (handled || !sent) return;
+            if (later) return toast.show({ kind: 'info', title: 'Buy still confirming', detail: 'Take profit / stop loss will be set if it lands.', autoClose: 12000 });
+            if (buyFailed) return toast.show({ kind: 'error', title: `The ${sym} buy failed`, detail: 'No take profit / stop loss was set.', autoClose: 12000 });
             if (made.length) toast.show({ kind: 'success', title: 'Take profit / stop loss set', detail: made.map((o) => `${o.label} at ${usd(o.targetMc)}`).join(' · '), autoClose: 7000 });
-            if (sent && reason) toast.show({ kind: made.length ? 'info' : 'error', title: made.length ? 'Part of the TP / SL was not set' : 'Take profit / stop loss not set', detail: reason, autoClose: 12000 });
+            if (reason) toast.show({ kind: made.length ? 'info' : 'error', title: made.length ? 'Part of the TP / SL was not set' : 'Take profit / stop loss not set', detail: reason, autoClose: 12000 });
           })
           .catch(() => {});
       }

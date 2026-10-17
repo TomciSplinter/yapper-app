@@ -22,7 +22,7 @@ import { loadHolding } from './holdings';
 import { getState as walletState, signerKind, openWalletModal } from './wallets';
 import { announce } from './voicebus';
 import { getQuotes } from './quotes';
-import { signatureStates } from './chain';
+import { signatureStates, blockhashValid } from './chain';
 import { fetchSolPrice } from './markets';
 import { recordTrade } from './history';
 import { usd } from './format';
@@ -277,7 +277,7 @@ export function createBracket({ wallet, mint, symbol, name, image, entryMc, mcNo
     const r = resolveTarget({ kind: leg.kind, value: leg.value, dir }, { mcNow: now, supply, baseMc: entryMc });
     if (r.error) skipped.push(`${label}: ${r.error}`);
     // a leg that's already past its trigger would sell at once
-    else if (alreadyHit(dir, r.targetMc, now)) skipped.push(`${label} at ${usd(r.targetMc)} is already ${dir === 'above' ? 'below' : 'above'} the market cap (${usd(now)})`);
+    else if (alreadyHit(dir, r.targetMc, now)) skipped.push(`${label} at ${usd(r.targetMc)}: the market cap is already ${dir === 'above' ? 'above' : 'below'} that (${usd(now)})`);
     else ready.push({ leg, label, dir, targetMc: r.targetMc });
   }
   if (ready.length > openSlots()) return { made: [], skipped: [`You already have ${MAX_ACTIVE} open orders. Cancel some first.`] };
@@ -305,8 +305,13 @@ export function createBracket({ wallet, mint, symbol, name, image, entryMc, mcNo
 
 /* ---------- take profit / stop loss after a buy ---------- */
 
-// The plan is saved before the buy is sent, so it survives a closed tab: the
-// runner places it once the buy is confirmed.
+// The plan is saved before the buy is sent, so it survives a closed tab. The
+// tab that bought places it once the buy confirms; if that tab is gone (or the
+// buy was very slow), the runner does, but only after giving that tab time, so
+// it's never placed twice.
+const HANDOFF_MS = 5 * 60 * 1000;
+const NEVER_LANDED_MS = 10 * 60 * 1000;
+
 function readIntents() {
   try {
     const v = JSON.parse(localStorage.getItem(INTENTS) || '[]');
@@ -332,6 +337,19 @@ function dropIntent(id) {
   writeIntents(readIntents().filter((x) => x.id !== id));
 }
 
+// Remember the buy's transaction as it's sent.
+export function bracketIntentSent(id, sig) {
+  if (id && sig) updateIntent(id, { sig, sentAt: Date.now() });
+}
+
+// Take a plan for this tab: false when it's gone or another tab has it.
+function claimIntent(id) {
+  const cur = readIntents().find((x) => x.id === id);
+  if (!cur || (cur.taken && Date.now() - cur.taken < HANDOFF_MS)) return false;
+  updateIntent(id, { taken: Date.now() });
+  return true;
+}
+
 // entry market cap from the fill: the swap price (network fee left out), scaled
 // to market cap with a fresh quote
 export function entryFromFill(fill, q, solPrice) {
@@ -352,22 +370,34 @@ async function placeFromFill(fill, { wallet, mint, symbol, name, image, tp, sl, 
   return createBracket({ wallet, mint, symbol, name, image, entryMc, mcNow: q?.mc || entryMc, supply: q?.supply, held, tp, sl, source });
 }
 
+const legsText = (made) => made.map((o) => o.label.toLowerCase()).join(' and ');
+
 // After executeTrade: place the take profit / stop loss, measured from the
 // price the buy actually got. Waits for a slow confirmation.
-// Returns { made, reason } — reason says why nothing (or not everything) was placed.
+// Returns { made, reason, handled, later, buyFailed }: reason says why nothing
+// (or not everything) was placed; handled means another tab is on it; later
+// means the buy hasn't confirmed yet and they'll be placed if it does;
+// buyFailed means the slow buy turned out to have failed.
 export async function bracketAfterBuy(res, opts) {
   const { intentId } = opts;
-  if (intentId) updateIntent(intentId, { taken: Date.now() }); // this tab places it
+  if (intentId && !claimIntent(intentId)) return { made: [], reason: null, handled: true };
+  let keep = false;
   try {
     if (res?.status === 'pending' && res.sig) {
       // not confirmed yet: give it the time a transaction can still land
       const deadline = Date.now() + DROPPED_MS;
       let st = 'unknown';
-      while (Date.now() < deadline && st === 'unknown') {
+      while (Date.now() < deadline && (st === 'unknown' || st === 'landing')) {
         await new Promise((r) => setTimeout(r, 4000));
-        st = (await signatureStates([res.sig]).catch(() => new Map())).get(res.sig) || 'unknown';
+        const states = await signatureStates([res.sig]).catch(() => null);
+        if (states) st = states.get(res.sig) || 'unknown';
       }
-      if (st !== 'ok') return { made: [], reason: st === 'failed' ? 'the buy failed' : "the buy wasn't confirmed" };
+      if (st === 'failed') return { made: [], reason: 'the buy failed', buyFailed: true };
+      if (st !== 'ok') {
+        // still not known: the runner keeps checking and places them if it lands
+        keep = !!intentId;
+        return { made: [], reason: keep ? "the buy hasn't confirmed yet. They'll be set if it goes through" : "the buy wasn't confirmed", later: keep };
+      }
       const fill = await recordTrade(opts.wallet, opts.mint, res.sig).catch(() => null);
       const r = await placeFromFill(fill, opts);
       return { made: r.made, reason: r.skipped.join('; ') || null };
@@ -377,59 +407,73 @@ export async function bracketAfterBuy(res, opts) {
     const r = await placeFromFill(fill, opts);
     return { made: r.made, reason: r.skipped.join('; ') || null };
   } finally {
-    if (intentId) dropIntent(intentId);
+    if (intentId) {
+      if (keep) updateIntent(intentId, { taken: 0 });
+      else dropIntent(intentId);
+    }
   }
 }
 
-// buys whose take profit / stop loss is still to be placed (tab closed meanwhile)
+// Plans the tab that bought didn't get to (closed, or the buy was slow):
+// placed here, and what happened is always said.
 async function resumeIntents(solPrice) {
-  const now = Date.now();
+  const tell = (it, text, kind) =>
+    announce({ kind: 'order', text, mint: it.mint, symbol: it.symbol, toast: { kind, title: `${it.symbol || 'Your buy'}: take profit / stop loss`, detail: text } });
   for (const it of readIntents()) {
-    if (it.taken && now - it.taken < 5 * 60 * 1000) continue; // a tab is handling it
+    const buy = it.symbol ? `${it.symbol} buy` : 'buy';
+    const forWhat = it.symbol || 'your buy';
+    const now = Date.now();
+    if (it.taken && now - it.taken < HANDOFF_MS) continue; // a tab is on it
     if (!it.sig) {
-      if (now - it.at > 10 * 60 * 1000) dropIntent(it.id); // never sent
+      if (now - it.at > NEVER_LANDED_MS) dropIntent(it.id); // never sent
       continue;
     }
-    const st = (await signatureStates([it.sig]).catch(() => new Map())).get(it.sig) || 'unknown';
-    if (st === 'unknown') {
-      if (now - it.at > DROPPED_MS + 60 * 1000) dropIntent(it.id);
+    if (now - (it.sentAt || it.at) < HANDOFF_MS) continue; // the tab that bought has it
+    const states = await signatureStates([it.sig]).catch(() => null);
+    if (!states) continue; // can't tell right now: keep it
+    const st = states.get(it.sig) || 'unknown';
+    if (st === 'unknown' || st === 'landing') {
+      if (st === 'unknown' && Date.now() - (it.sentAt || it.at) > NEVER_LANDED_MS) {
+        dropIntent(it.id);
+        tell(it, `The ${buy} never confirmed, so no take profit or stop loss was set.`, 'info');
+      }
       continue;
     }
-    // another tab may have picked it up while we looked
-    const cur = readIntents().find((x) => x.id === it.id);
-    if (!cur || (cur.taken && Date.now() - cur.taken < 5 * 60 * 1000)) continue;
-    updateIntent(it.id, { taken: Date.now() });
+    if (!claimIntent(it.id)) continue;
     if (st === 'failed') {
       dropIntent(it.id);
+      tell(it, `The ${buy} failed, so no take profit or stop loss was set.`, 'info');
       continue;
     }
-    const fill = await recordTrade(it.wallet, it.mint, it.sig).catch(() => null);
-    const r = await placeFromFill(fill, { ...it, solPrice, source: 'restored' }).catch(() => ({ made: [], skipped: [] }));
-    dropIntent(it.id);
-    if (r.made.length) {
-      announce({
-        kind: 'order',
-        text: `Placed the ${r.made.map((o) => o.label.toLowerCase()).join(' and ')} for ${it.symbol || 'your buy'}.`,
-        mint: it.mint,
-        symbol: it.symbol,
-      });
+    let r;
+    try {
+      const fill = await recordTrade(it.wallet, it.mint, it.sig).catch(() => null);
+      r = await placeFromFill(fill, { ...it, solPrice, source: 'restored' });
+    } catch (e) {
+      const tries = (it.tries || 0) + 1;
+      if (tries < 3) {
+        updateIntent(it.id, { taken: 0, tries }); // again next round
+        continue;
+      }
+      r = { made: [], skipped: [String(e?.message || 'something went wrong')] };
     }
+    dropIntent(it.id);
+    const why = r.skipped.join('; ');
+    if (r.made.length && !why) tell(it, `Placed the ${legsText(r.made)} for ${forWhat}.`, 'success');
+    else if (r.made.length) tell(it, `Placed the ${legsText(r.made)} for ${forWhat}. Not placed: ${why}.`, 'info');
+    else tell(it, `Couldn't place the take profit or stop loss for ${forWhat}: ${why || 'unknown reason'}.`, 'error');
   }
-}
-
-// Remember a pending bracket's transaction as soon as it's sent.
-export function bracketIntentSent(id, sig) {
-  if (id && sig) updateIntent(id, { sig });
 }
 
 /* ---------- cancelling ---------- */
 
-// an order can be cancelled until its trade is sent (the runner checks right
-// before sending); after that it's up to the chain
+// An order can be cancelled until its trade is sent (the runner checks right
+// before sending); after that it's up to the chain. Its own record decides,
+// not the list (which another tab may have overwritten with an old copy).
 function cancellable(o) {
-  if (o.status !== 'active' && o.status !== 'executing') return false;
   const m = getMark(o.id);
-  return !m || m.state === 'retry' || (m.state === 'executing' && !m.sig);
+  if (m) return m.state === 'retry' || (m.state === 'executing' && !m.sig);
+  return isLive(o);
 }
 
 export function cancelOrder(id, note = 'Cancelled') {
@@ -440,9 +484,7 @@ export function cancelOrder(id, note = 'Cancelled') {
   } catch {
     return false;
   }
-  mutateQuietly((list) =>
-    list.map((x) => (x.id === id && (x.status === 'active' || x.status === 'executing') ? { ...x, status: 'cancelled', note, doneAt: Date.now() } : x))
-  );
+  mutateQuietly((list) => list.map((x) => (x.id === id && isLive(x) ? { ...x, status: 'cancelled', note, doneAt: Date.now() } : x)));
   return true;
 }
 
@@ -546,14 +588,15 @@ function lead(onLead, onLose) {
 // deps: { getToast, getOnTraded, getSolPrice, extraMints?: () => [mint], onQuotes?: async (quotes) => void, watchEvery?: () => ms }
 export function startOrderEngine(deps) {
   ensureLoaded();
+  const me = `t_${Math.random().toString(36).slice(2, 10)}`; // this tab, in the records it claims
   let leading = false;
   let ticking = false;
   let calloutsBusy = false;
   const inflight = new Set(); // ids being executed by this tab
-  const fired = new Set(); // ids this tab has sent (never send them again)
   const holdUntil = new Map(); // id -> no new attempt before this time
   const emptyCheckAt = new Map(); // wallet:mint -> last empty-position check
   const noticeAt = new Map(); // id -> last "can't run yet" notice
+  const zeroSince = new Map(); // wallet:mint -> first empty read
   let solPrice = null;
   let solAt = 0;
   let intentsAt = 0;
@@ -573,24 +616,24 @@ export function startOrderEngine(deps) {
   const setStatus = (id, status, extra = {}) =>
     mutateQuietly((list) => list.map((o) => (o.id === id ? { ...o, status, ...(FINAL.has(status) ? { doneAt: Date.now() } : {}), ...extra } : o)));
 
-  // back to waiting for the trigger, without a new attempt for `ms`
-  // (unless it was cancelled meanwhile)
-  const release = (o, ms, extra = {}) => {
+  // Back to waiting for the trigger, without a new attempt for `ms` (unless it
+  // was cancelled meanwhile). Only drops a claim that's this tab's, or one left
+  // behind by a tab that went away (takeOver).
+  const release = (o, ms, extra = {}, { takeOver = false } = {}) => {
     const m = getMark(o.id);
     if (m && FINAL.has(m.state)) return setStatus(o.id, m.state);
-    if (m && m.state === 'executing' && !m.sig) {
+    if (m && m.state === 'executing' && !m.sig && (m.owner === me || takeOver)) {
       try {
         if (m.attempts) setMark(o.id, { state: 'retry', attempts: m.attempts });
         else clearMark(o.id);
       } catch {}
     }
     holdUntil.set(o.id, Date.now() + ms);
-    setStatus(o.id, 'active', extra);
+    setStatus(o.id, 'active', { sig: null, ...extra });
   };
 
   // A balance can read 0 for a moment (a lagging node): an order only gives up
   // on a position after two empty reads at least 15 seconds apart.
-  const zeroSince = new Map(); // wallet:mint -> first empty read
   const reallyEmpty = (wallet, mint, amount) => {
     const k = `${wallet}:${mint}`;
     if (amount > 0) {
@@ -613,39 +656,50 @@ export function startOrderEngine(deps) {
     if (o.type === 'sell' && o.effectivePercent >= 100) retireSells(o.wallet, o.mint, 'Position closed');
   };
 
-  const finishFailed = (o, note, sig) => {
+  const finishFailed = (o, note, sig, text) => {
     try {
       setMark(o.id, { state: 'failed', sig });
     } catch {}
     setStatus(o.id, 'failed', { sig: sig || null, note });
-    announce({ kind: 'order', text: `The ${orderLabel(o).toLowerCase()} for ${o.symbol || 'the coin'} didn't go through. ${note || ''}`.trim(), mint: o.mint, symbol: o.symbol });
+    announce({
+      kind: 'order',
+      text: text || `The ${orderLabel(o).toLowerCase()} for ${o.symbol || 'the coin'} didn't go through. ${note || ''}`.trim(),
+      mint: o.mint,
+      symbol: o.symbol,
+      toast: { kind: 'error', title: `${orderLabel(o)} failed`, detail: note || undefined },
+    });
   };
 
-  // a trade that spent nothing: try again while the price is still past the trigger
+  // A trade that spent nothing: try again while the price is still past the
+  // trigger. Sells keep at it longer, backing off (a stop loss mustn't give up
+  // after a few seconds of slippage in a crash); buys try twice.
+  const MAX_TRIES = { buy: 2, sell: 8 };
   const retryOrFail = (o, note, attempts) => {
-    fired.delete(o.id); // known not to have gone through, so it may be sent again
-    if (attempts < (o.type === 'sell' ? 3 : 2)) {
+    if (attempts < (MAX_TRIES[o.type] || 2)) {
       try {
         setMark(o.id, { state: 'retry', attempts });
       } catch {}
-      holdUntil.set(o.id, Date.now() + 2000);
+      holdUntil.set(o.id, Date.now() + (o.type === 'sell' ? Math.min(30000, 2000 * 2 ** (attempts - 1)) : 2000));
       setStatus(o.id, 'active', { attempts, sig: null, note: `Retrying: ${note}` });
+      if (o.type === 'sell' && attempts === 2) {
+        notice(o, `The ${orderLabel(o).toLowerCase()} for ${o.symbol || 'the coin'} didn't fill (${note}). I'll keep trying while the price is past the trigger.`);
+      }
     } else {
       finishFailed(o, note);
     }
   };
 
   async function fire(o) {
-    // claim it through its own state record; a stale list can't override this
+    if (inflight.has(o.id)) return;
+    // claim it through its own record; a stale list can't override this
     const m = getMark(o.id);
-    if (fired.has(o.id) || inflight.has(o.id)) return;
     if (m && m.state !== 'retry') {
       if (FINAL.has(m.state)) setStatus(o.id, m.state);
       return;
     }
     const attempts = m?.attempts || 0;
     try {
-      setMark(o.id, { state: 'executing', attempts });
+      setMark(o.id, { state: 'executing', attempts, owner: me });
     } catch {
       holdUntil.set(o.id, Date.now() + 30000);
       return;
@@ -705,8 +759,11 @@ export function startOrderEngine(deps) {
         }
       }
 
-      // cancelled while we looked?
-      if (getMark(o.id)?.state !== 'executing') return release(o, 0);
+      // cancelled, or taken over by another tab, while we looked?
+      const before = getMark(o.id);
+      if (before && FINAL.has(before.state)) return setStatus(o.id, before.state);
+      if (!before || before.state !== 'executing' || before.owner !== me) return;
+
       let storageFull = false;
       announce({
         kind: 'order',
@@ -728,18 +785,17 @@ export function startOrderEngine(deps) {
         prioFee: o.prioFee ?? undefined,
         toast: deps.getToast(),
         onTraded: deps.getOnTraded(),
-        // last moment to stop: cancelled orders don't go out, and nothing goes
-        // out unless its record says so (a closed tab can't leave it unknown)
-        beforeSend: (sig) => {
+        // last moment to stop: only this tab's live claim goes out, and the
+        // record holds the transaction before it does
+        beforeSend: (sig, info) => {
           const cur = getMark(o.id);
-          if (!cur || cur.state !== 'executing' || cur.sig) return false;
+          if (!cur || cur.state !== 'executing' || cur.sig || cur.owner !== me) return false;
           try {
-            setMark(o.id, { state: 'executing', attempts, sig, sentAt: Date.now(), effectivePercent: percent });
+            setMark(o.id, { ...cur, sig, sentAt: Date.now(), effectivePercent: percent, blockhash: info?.blockhash || null });
           } catch {
             storageFull = true;
             return false;
           }
-          fired.add(o.id);
           mutateQuietly((list) => list.map((x) => (x.id === o.id ? { ...x, sig } : x)));
           return true;
         },
@@ -747,26 +803,28 @@ export function startOrderEngine(deps) {
       const done = { ...o, effectivePercent: percent };
       if (res.status === 'ok') return finishDone(done, res.sig, `Filled at about ${usd(q.mc)} MC`);
       if (res.status === 'pending') {
-        // sent but not confirmed: decided on later ticks, never sent again
+        // sent but not confirmed: decided on later checks, never sent again
+        const cur = getMark(o.id);
         try {
-          setMark(o.id, { state: 'unconfirmed', sig: res.sig, sentAt: getMark(o.id)?.sentAt || Date.now(), attempts, effectivePercent: percent });
+          setMark(o.id, { ...cur, state: 'unconfirmed', sig: res.sig, sentAt: cur?.sentAt || Date.now(), attempts, effectivePercent: percent });
         } catch {}
         return setStatus(o.id, 'unconfirmed', { sig: res.sig || null, note: 'Sent, waiting for confirmation' });
       }
+      const cur = getMark(o.id);
       if (res.status === 'cancelled') {
         if (storageFull) {
           announce({ kind: 'order', text: `Couldn't run the ${orderLabel(o).toLowerCase()} for ${sym}: this browser's storage is full.`, mint: o.mint, symbol: sym });
           return release(o, 60000);
         }
-        const cur = getMark(o.id);
-        if (cur?.state === 'cancelled') return setStatus(o.id, 'cancelled');
+        if (cur && FINAL.has(cur.state)) return setStatus(o.id, cur.state); // cancelled by you meanwhile
+        if (!cur || cur.state !== 'executing' || cur.sig || cur.owner !== me) return; // another tab has it now
         try {
           setMark(o.id, { state: 'cancelled' });
         } catch {}
         return setStatus(o.id, 'cancelled', { note: 'Rejected in your wallet' });
       }
       // 'failed' (landed, did nothing) or 'error' (never sent): nothing was spent
-      fired.delete(o.id);
+      if (cur && cur.owner && cur.owner !== me) return; // another tab has it now
       return retryOrFail(o, res.error || 'the trade failed', attempts + 1);
     } finally {
       inflight.delete(o.id);
@@ -776,8 +834,9 @@ export function startOrderEngine(deps) {
   // sent orders whose confirmation is still open
   async function settleUnconfirmed(list) {
     const waiting = list.filter((o) => {
+      if (inflight.has(o.id)) return false;
       const m = getMark(o.id);
-      return m && (m.state === 'unconfirmed' || (m.state === 'executing' && m.sig && !inflight.has(o.id)));
+      return m && m.sig && (m.state === 'unconfirmed' || m.state === 'executing');
     });
     if (!waiting.length) return;
     const marks = new Map(waiting.map((o) => [o.id, getMark(o.id)]));
@@ -785,22 +844,43 @@ export function startOrderEngine(deps) {
     if (!states) return;
     for (const o of waiting) {
       const m = marks.get(o.id);
+      const now = getMark(o.id);
+      if (!now || now.sig !== m.sig || FINAL.has(now.state)) continue; // settled meanwhile
       const st = states.get(m.sig) || 'unknown';
+      const sym = o.symbol || 'the coin';
       if (st === 'ok') {
         finishDone({ ...o, effectivePercent: m.effectivePercent ?? o.percent }, m.sig, 'Filled');
-        announce({ kind: 'order', text: `The ${orderLabel(o).toLowerCase()} for ${o.symbol || 'the coin'} went through.`, mint: o.mint, symbol: o.symbol });
+        recordTrade(o.wallet, o.mint, m.sig)
+          .catch(() => null)
+          .finally(() => deps.getOnTraded()?.());
+        announce({
+          kind: 'order',
+          text: `The ${orderLabel(o).toLowerCase()} for ${sym} went through.`,
+          mint: o.mint,
+          symbol: o.symbol,
+          toast: { kind: 'success', title: `${orderLabel(o)} filled`, detail: `${sym}: the trade confirmed.` },
+        });
       } else if (st === 'failed') {
         retryOrFail(o, 'the trade failed on chain', (m.attempts || 0) + 1);
-      } else if (Date.now() - (m.sentAt || m.at || 0) > DROPPED_MS) {
-        // never landed: its blockhash has expired, so it can't land any more
-        retryOrFail(o, "the network dropped the trade", (m.attempts || 0) + 1);
+      } else if (st === 'unknown') {
+        const age = Date.now() - (m.sentAt || m.at || 0);
+        if (age < DROPPED_MS) continue;
+        // only tried again once it can never land: its blockhash has expired
+        let gone = null;
+        if (m.blockhash) gone = await blockhashValid(m.blockhash).then((ok) => !ok, () => null);
+        else if (age > 5 * 60 * 1000) gone = true; // no blockhash on record: by time alone
+        if (gone === true) retryOrFail(o, 'the network dropped the trade', (m.attempts || 0) + 1);
+        else if (gone === null && age > 10 * 60 * 1000) {
+          finishFailed(o, "Couldn't confirm whether it went through", m.sig, `I couldn't confirm whether the ${orderLabel(o).toLowerCase()} for ${sym} went through. Check your wallet before trying again.`);
+        }
       }
+      // 'landing': in a block and confirming: keep waiting
     }
   }
 
   // sell orders for a position that's gone (sold elsewhere, e.g. in another app)
   async function retireEmpty(list) {
-    const sells = list.filter((o) => o.status === 'active' && o.type === 'sell');
+    const sells = list.filter((o) => o.type === 'sell' && waitingForTrigger(o));
     const seen = new Set();
     for (const o of sells) {
       const k = `${o.wallet}:${o.mint}`;
@@ -812,6 +892,35 @@ export function startOrderEngine(deps) {
         if (reallyEmpty(o.wallet, o.mint, h.amount)) retireSells(o.wallet, o.mint, 'Position closed');
         else if (!(h.amount > 0)) emptyCheckAt.set(k, Date.now() - EMPTY_CHECK_MS + 16000); // look again soon
       } catch {}
+    }
+  }
+
+  // waiting for its trigger, by its own record (the list's status is only what
+  // you see, and a failed or stale list write mustn't stop an order)
+  const waitingForTrigger = (o) => {
+    if (!isLive(o) || inflight.has(o.id)) return false;
+    const m = getMark(o.id);
+    return !m || m.state === 'retry';
+  };
+
+  // the list (what you see) catches up with each order's own record
+  function reconcile(now) {
+    for (const o of getOrders().filter(isLive)) {
+      if (inflight.has(o.id)) continue;
+      const m = getMark(o.id);
+      if (m && FINAL.has(m.state)) {
+        if (o.status !== m.state) setStatus(o.id, m.state);
+      } else if (m && m.state === 'unconfirmed') {
+        if (o.status !== 'unconfirmed') setStatus(o.id, 'unconfirmed', { sig: m.sig });
+      } else if (!m || m.state === 'retry') {
+        // waiting for its trigger (a list write failed, or an old copy came in)
+        if (o.status !== 'active') setStatus(o.id, 'active', { sig: null });
+      } else if (m.state === 'executing' && m.sig) {
+        if (o.status === 'active') setStatus(o.id, 'executing', { sig: m.sig });
+      } else if (m.state === 'executing' && now - (m.at || 0) > 3 * 60 * 1000) {
+        // claimed by a tab that went away before sending: free again
+        release(o, 0, { note: 'Interrupted before sending; waiting again' }, { takeOver: true });
+      }
     }
   }
 
@@ -828,22 +937,10 @@ export function startOrderEngine(deps) {
           })
           .catch(() => {});
       }
-      // the list catches up with each order's own record
-      for (const o of getOrders().filter(isLive)) {
-        const m = getMark(o.id);
-        if (m && FINAL.has(m.state) && o.status !== m.state) setStatus(o.id, m.state);
-        if (m && m.state === 'unconfirmed' && o.status !== 'unconfirmed') setStatus(o.id, 'unconfirmed', { sig: m.sig });
-      }
-      // left mid-run by a closed tab before anything was sent: free again
-      for (const o of getOrders().filter((x) => isLive(x) && !inflight.has(x.id) && !fired.has(x.id))) {
-        const m = getMark(o.id);
-        if (m && m.state === 'executing' && !m.sig && now - (m.at || 0) > 3 * 60 * 1000) release(o, 0, { note: 'Interrupted before sending; waiting again' });
-      }
+      reconcile(now);
       await settleUnconfirmed(getOrders().filter(isLive));
       // expiry (never while it's running or sent)
-      for (const o of getOrders().filter((x) => x.status === 'active' && x.expiresAt && x.expiresAt <= now && !inflight.has(x.id))) {
-        const m = getMark(o.id);
-        if (m && m.state !== 'retry') continue;
+      for (const o of getOrders().filter((x) => waitingForTrigger(x) && x.expiresAt && x.expiresAt <= now)) {
         try {
           setMark(o.id, { state: 'expired' });
         } catch {}
@@ -860,16 +957,16 @@ export function startOrderEngine(deps) {
           });
       }
 
-      const live = getOrders().filter((o) => o.status === 'active');
+      const live = getOrders().filter(waitingForTrigger);
       const extra = deps.extraMints?.() || [];
       const mints = [...new Set([...live.map((o) => o.mint), ...extra])];
-      ticker.set(live.length || getOrders().some((o) => o.status === 'unconfirmed') ? 3000 : extra.length ? deps.watchEvery?.() || 15000 : 15000);
+      ticker.set(live.length || getOrders().some((o) => isLive(o) && o.status !== 'active') ? 3000 : extra.length ? deps.watchEvery?.() || 15000 : 15000);
       if (!mints.length) return;
       const quotes = await getQuotes(mints, getSol());
       for (const o of live) {
         const q = quotes.get(o.mint);
         if (!q?.mc || !alreadyHit(o.dir, o.targetMc, q.mc)) continue;
-        if ((holdUntil.get(o.id) || 0) > Date.now() || inflight.has(o.id)) continue;
+        if ((holdUntil.get(o.id) || 0) > Date.now()) continue;
         // each order runs on its own: one waiting for a wallet popup doesn't hold up the rest
         fire(o).catch(() => {});
       }
